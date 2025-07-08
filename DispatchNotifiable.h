@@ -10,7 +10,6 @@
 #include "DispatchQueue.h"
 
 // this is a protocol
-template <typename T>
 class DispatchNotifiable {
  public:
   virtual ~DispatchNotifiable() = default;
@@ -19,7 +18,20 @@ class DispatchNotifiable {
 
   virtual bool tryWait(std::chrono::milliseconds timeout) = 0;
 
-  virtual void notify(DispatchQueue*, std::function<void(T)>) = 0;
+  virtual void notify(DispatchQueue*, std::function<void()>) = 0;
 
   virtual void notify(DispatchQueue*, DispatchWorkItem&) = 0;
+};
+
+class DispatchNotifyExecutor {
+public:
+  virtual ~DispatchNotifyExecutor() = default;
+
+  virtual void notify(DispatchQueue*, std::function<void()>) = 0;
+
+  virtual void notify(DispatchQueue*, DispatchWorkItem&) = 0;
+
+  virtual std::unique_ptr<DispatchNotifyExecutor> clone() const = 0;
+
+  virtual void doNotify() = 0;
 };

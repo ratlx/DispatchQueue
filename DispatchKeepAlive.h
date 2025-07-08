@@ -4,26 +4,36 @@
 
 #pragma once
 
-#include <stdexcept>
-#include <utility>
 #include <atomic>
 #include <semaphore>
+#include <stdexcept>
+#include <utility>
+
+class DispatchWorkItem;
 
 class DispatchKeepAlive {
-public:
+ public:
   // not support for dummy or alias
   template <typename T>
     requires std::is_base_of_v<DispatchKeepAlive, T>
   class KeepAlive {
-  public:
+   public:
     KeepAlive() noexcept = default;
 
-    KeepAlive(const KeepAlive& other) = delete;
-    KeepAlive& operator=(const KeepAlive&) = delete;
+    KeepAlive(const KeepAlive& other) : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
+    KeepAlive& operator=(const KeepAlive& other) {
+      if (this == &other) {
+        return *this;
+      }
+      return operator=(KeepAlive(other));
+    }
 
     KeepAlive(KeepAlive&& other) noexcept
         : ptr_(std::exchange(other.ptr_, nullptr)) {}
     KeepAlive& operator=(KeepAlive&& other) noexcept {
+      if (this == &other) {
+        return *this;
+      }
       reset();
       ptr_ = std::exchange(other.ptr_, nullptr);
       return *this;
@@ -49,10 +59,14 @@ public:
       }
     }
 
-    explicit operator bool() { return ptr_; }
-    T* operator->() { return ptr_; }
+    explicit operator bool() const noexcept { return ptr_; }
+    T* operator->() noexcept { return ptr_; }
+    T* get() noexcept { return ptr_; }
 
-  private:
+   private:
+    explicit KeepAlive(T* ptr) noexcept : ptr_(ptr) {}
+
+    friend class DispatchKeepAlive;
     T* ptr_{nullptr};
   };
 
@@ -79,7 +93,9 @@ public:
     return KeepAlive<QT>(ptr);
   }
 
-private:
+ private:
+  KeepAlive<DispatchKeepAlive> keepAlive_{this};
+
   std::atomic<std::size_t> keepAliveCount_{1};
   std::binary_semaphore keepAliveRelease_{0};
 };

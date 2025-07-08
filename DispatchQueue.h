@@ -4,11 +4,11 @@
 
 #pragma once
 
-#include <memory>
 #include <functional>
+#include <memory>
 
-#include "task_queue/BlockingQueue.h"
 #include "DispatchKeepAlive.h"
+#include "task_queue/BlockingQueue.h"
 
 template <typename T>
 using Func = std::function<T(void)>;
@@ -22,7 +22,9 @@ enum class DispatchAttribute : uint8_t {
 };
 using TaskPtr = std::unique_ptr<DispatchTask>;
 
-class DispatchQueue : virtual protected DispatchKeepAlive, virtual protected BlockingQueue<TaskPtr> {
+class DispatchQueue
+    : virtual public DispatchKeepAlive,
+      virtual protected BlockingQueue<TaskPtr> {
  public:
   struct DispatchWork {};
 
@@ -32,6 +34,4 @@ class DispatchQueue : virtual protected DispatchKeepAlive, virtual protected Blo
   virtual void async(Func<void> func, DispatchGroup& group) = 0;
   virtual void async(DispatchWorkItem& workItem) = 0;
 
-private:
-  friend class DispatchWorkItem;
 };

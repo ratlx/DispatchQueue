@@ -271,8 +271,8 @@ class MPMCQueue {
 
   ssize_t sizeGuess() const noexcept {
     return static_cast<ssize_t>(
-        head_.load(std::memory_order_acquire) -
-        tail_.load(std::memory_order_acquire));
+        head_.load(std::memory_order_relaxed) -
+        tail_.load(std::memory_order_relaxed));
   }
 
   ssize_t size() const noexcept {

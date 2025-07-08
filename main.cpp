@@ -10,6 +10,7 @@
 
 #include "task_queue/MPMCQueue.h"
 #include "task_queue/PrioritySemMPMCQueue.h"
+#include "DispatchWorkItem.h"
 
 using namespace std;
 
