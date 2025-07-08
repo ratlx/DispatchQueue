@@ -9,8 +9,6 @@
 #include <stdexcept>
 #include <utility>
 
-class DispatchWorkItem;
-
 class DispatchKeepAlive {
  public:
   // not support for dummy or alias
@@ -20,7 +18,8 @@ class DispatchKeepAlive {
    public:
     KeepAlive() noexcept = default;
 
-    KeepAlive(const KeepAlive& other) : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
+    KeepAlive(const KeepAlive& other)
+        : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
     KeepAlive& operator=(const KeepAlive& other) {
       if (this == &other) {
         return *this;
@@ -70,18 +69,6 @@ class DispatchKeepAlive {
     T* ptr_{nullptr};
   };
 
-  void keepAliveAcquire() {
-    if (keepAliveCount_.fetch_add(1, std::memory_order_relaxed) == 0) {
-      throw std::runtime_error("never increment from 0");
-    }
-  }
-
-  void keepAliveRelease() {
-    if (keepAliveCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-      keepAliveRelease_.release();
-    }
-  }
-
   template <typename QT>
     requires std::is_base_of_v<DispatchKeepAlive, QT>
   static KeepAlive<QT> getKeepAliveToken(QT* ptr) {
@@ -93,9 +80,32 @@ class DispatchKeepAlive {
     return KeepAlive<QT>(ptr);
   }
 
+ protected:
+  void keepAliveAcquire() {
+    if (keepAliveCount_.fetch_add(1, std::memory_order_acq_rel) == 0) {
+      throw std::runtime_error("never increment from 0");
+    }
+  }
+
+  void keepAliveRelease() {
+    if (keepAliveCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+      keepAliveRelease_.release();
+    }
+  }
+
+  bool joinKeepAliveOnce() {
+    if (!std::exchange(keepAliveJoined_, true)) {
+      keepAlive_.reset();
+      keepAliveRelease_.acquire();
+      return true;
+    }
+    return false;
+  }
+
  private:
   KeepAlive<DispatchKeepAlive> keepAlive_{this};
 
   std::atomic<std::size_t> keepAliveCount_{1};
   std::binary_semaphore keepAliveRelease_{0};
+  bool keepAliveJoined_{false};
 };
