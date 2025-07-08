@@ -8,6 +8,7 @@
 #include <optional>
 #include <semaphore>
 #include <stdexcept>
+#include <atomic>
 #include <vector>
 
 #include "BlockingQueue.h"
@@ -37,6 +38,7 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
 
   BlockingQueueAddResult addWithPriority(T elem, int8_t priority) override {
     auto mid = getNumPriorities() / 2;
+    auto writeCount = writeCount_.fetch_add(1, std::memory_order_relaxed) + 1;
     std::size_t queue = priority < 0
         ? std::max(0, mid + priority)
         : std::min(getNumPriorities() - 1, mid + priority);
@@ -51,38 +53,23 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
         queues_[queue].push(std::move(elem));
         break;
     }
-
-    // Try_acquire is used to check whether a thread is taking. There are also
-    // exceptions: when the queue is empty, the thread reuse mark will also be set to true.
-    if (sem_.try_acquire()) {
-      sem_.release(2);
-      return false;
-    }
     sem_.release();
-    return true;
+    return writeCount <= readCount_.load(std::memory_order_relaxed);
   }
 
   BlockingQueueAddResult add(T elem) override { return addWithPriority(std::move(elem), Priority::MID_PRI); }
 
   void take(T& elem) override {
-    sem_.acquire();
-    if (auto res = nonBlockingTake()) {
-      elem = std::move(res.value());
-      return;
-    }
+    readCount_.fetch_add(1, std::memory_order_relaxed);
     sem_.acquire();
     elem = std::move(nonBlockingTake().value());
   }
 
   std::optional<T> tryTake(std::chrono::milliseconds time) noexcept override {
+    readCount_.fetch_add(1, std::memory_order_relaxed);
     auto deadline = std::chrono::steady_clock::now() + time;
     if (!sem_.try_acquire_until(deadline)) {
-      return std::nullopt;
-    }
-    if (auto res = nonBlockingTake()) {
-      return res;
-    }
-    if (!sem_.try_acquire_until(deadline)) {
+      readCount_.fetch_sub(1, std::memory_order_relaxed);
       return std::nullopt;
     }
     return nonBlockingTake();
@@ -115,5 +102,7 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
   }
 
   std::vector<MPMCQueue<T>> queues_;
-  std::counting_semaphore<> sem_{1};
+  std::counting_semaphore<> sem_{0};
+  std::atomic<std::size_t> readCount_{0};
+  std::atomic<std::size_t> writeCount_{0};
 };
