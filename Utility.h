@@ -11,3 +11,6 @@ struct Priority {
   static constexpr int8_t MID_PRI = 0;
   static constexpr int8_t HI_PRI = INT8_MAX;
 };
+
+template <typename T>
+using Func = std::function<T(void)>;

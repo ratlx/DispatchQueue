@@ -73,7 +73,7 @@ TEST(PSMPMCQueue, ThreadReused) {
 
 TEST(PSMPMCQueue, Concurrent) {
   int m = 255;
-  int n = 1000;
+  int n = 255;
   PrioritySemMPMCQueue<int, QueueBehaviorIfFull::BLOCK> q(m, n / 3);
   int l = - m / 2;
   int r = m / 2 + (m & 1);

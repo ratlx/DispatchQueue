@@ -12,7 +12,7 @@
 class DispatchKeepAlive {
  public:
   // not support for dummy or alias
-  template <typename T>
+  template <typename T = DispatchKeepAlive>
     requires std::is_base_of_v<DispatchKeepAlive, T>
   class KeepAlive {
    public:
@@ -21,6 +21,19 @@ class DispatchKeepAlive {
     KeepAlive(const KeepAlive& other)
         : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
     KeepAlive& operator=(const KeepAlive& other) {
+      if (this == &other) {
+        return *this;
+      }
+      return operator=(KeepAlive(other));
+    }
+
+    template <typename OtherT>
+      requires std::is_convertible_v<OtherT*, T*>
+    KeepAlive(const KeepAlive<OtherT>& other) noexcept
+        : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
+    template <typename OtherT>
+      requires std::is_convertible_v<OtherT*, T*>
+    KeepAlive& operator=(const KeepAlive<OtherT>& other) noexcept {
       if (this == &other) {
         return *this;
       }
@@ -39,13 +52,13 @@ class DispatchKeepAlive {
     }
 
     template <typename OtherT>
-      requires std::is_convertible_v<T*, OtherT*>
+      requires std::is_convertible_v<OtherT*, T*>
     KeepAlive(KeepAlive<OtherT>&& other) noexcept
-        : ptr_(reinterpret_cast<T*>(std::exchange(other.ptr_, nullptr))) {}
+        : ptr_(static_cast<T*>(std::exchange(other.ptr_, nullptr))) {}
 
-    template <typename OtherQT>
-      requires std::is_convertible_v<T*, OtherQT*>
-    KeepAlive& operator=(KeepAlive<OtherQT>&& other) noexcept {
+    template <typename OtherT>
+      requires std::is_convertible_v<OtherT*, T*>
+    KeepAlive& operator=(KeepAlive<OtherT>&& other) noexcept {
       return *this = KeepAlive(std::move(other));
     }
 

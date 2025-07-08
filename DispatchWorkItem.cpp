@@ -2,17 +2,42 @@
 // Created by 小火锅 on 25-7-8.
 //
 
-#include <memory>
-#include <chrono>
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
 
+#include "DispatchQueue.h"
 #include "DispatchWorkItem.h"
 
-std::unique_ptr<DispatchNotifyExecutor> DispatchWorkItem::makeNextWork() {
-  return std::make_unique<DispatchNextWork>();
+DispatchNotify::DispatchNotify(DispatchWorkItem& work, DispatchQueue* ptr)
+    : next_(DispatchKeepAlive::getKeepAliveToken(&work)),
+      queueKA_(DispatchKeepAlive::getKeepAliveToken(ptr)),
+      notified(NotifyState::workItem) {}
+
+void DispatchNotify::notify(DispatchQueue* qptr, DispatchWorkItem& work) {
+  checkAndSetNotify();
+  next_ = DispatchKeepAlive::getKeepAliveToken(&work);
+  queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+  notified.store(NotifyState::workItem, std::memory_order_release);
+}
+
+void DispatchNotify::doNotify() {
+  auto state = notified.load(std::memory_order_acquire);
+  if (state == NotifyState::func) {
+    auto queueKA = std::move(queueKA_);
+    auto func = std::move(std::get<0>(next_));
+    reinterpret_cast<DispatchQueue*>(queueKA.get())->async(std::move(func));
+  } else if (state == NotifyState::workItem) {
+    auto queueKA = std::move(queueKA_);
+    auto workItemKA = std::move(std::get<1>(next_));
+    reinterpret_cast<DispatchQueue*>(queueKA.get())
+        ->async(*reinterpret_cast<DispatchWorkItem*>(workItemKA.get()));
+  } else {
+    return;
+  }
+  notified.store(NotifyState::none, std::memory_order_release);
 }
 
 bool DispatchWorkItem::tryWait(std::chrono::milliseconds timeout) {
@@ -46,7 +71,7 @@ void DispatchWorkItem::checkAndSetWait() {
   if (!state_.waited.compare_exchange_strong(
           wait, true, std::memory_order_acq_rel)) {
     throw std::runtime_error("Multiple waits is not allowed");
-          }
+  }
   if (state_.count.load(std::memory_order_acquire) > 1) {
     throw std::runtime_error("Can't wait to perform multiple tasks");
   }
@@ -55,9 +80,7 @@ void DispatchWorkItem::checkAndSetWait() {
 void DispatchWorkItem::checkAndSetCount() {
   if (state_.count.fetch_add(1, std::memory_order_acq_rel) > 0) {
     if (state_.waited.load(std::memory_order_acquire)) {
-      throw std::runtime_error(
-          "The task is only executed once while waiting");
+      throw std::runtime_error("The task is only executed once while waiting");
     }
   }
 }
-

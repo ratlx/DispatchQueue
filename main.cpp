@@ -8,9 +8,9 @@
 #include <vector>
 #include <folly/MPMCQueue.h>
 
+#include "DispatchWorkItem.h"
 #include "task_queue/MPMCQueue.h"
 #include "task_queue/PrioritySemMPMCQueue.h"
-#include "DispatchWorkItem.h"
 
 using namespace std;
 
@@ -70,7 +70,7 @@ int main() {
     auto start = chrono::high_resolution_clock::now();
     atomic<int> s2 = 0;
     Test t{10};
-    MPMCQueue<Test> q2{m * n };
+    MPMCQueue<Test> q2{m * n};
     for (int i = 1; i <= n; ++i) {
       threads.emplace_back([&, i] {
         for (int j = 0; j < m; ++j) {

@@ -9,7 +9,7 @@
 #include <limits>
 
 #include "DispatchQueue.h"
-#include "task_queue/Priority.h"
+#include "Utility.h"
 #include "task_queue/PrioritySemMPMCQueue.h"
 
 class DispatchQueueExecutor {

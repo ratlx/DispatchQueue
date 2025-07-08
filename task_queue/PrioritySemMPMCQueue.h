@@ -11,9 +11,9 @@
 #include <atomic>
 #include <vector>
 
+#include "../Utility.h"
 #include "BlockingQueue.h"
 #include "MPMCQueue.h"
-#include "Priority.h"
 
 enum class QueueBehaviorIfFull { THROW, BLOCK };
 
@@ -54,6 +54,9 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
         break;
     }
     sem_.release();
+
+    // this return is just a guess. Thread reuse may obtain elements added by
+    // other threads, not elements added by the thread.
     return writeCount <= readCount_.load(std::memory_order_relaxed);
   }
 
