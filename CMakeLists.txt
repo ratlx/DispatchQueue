@@ -10,7 +10,8 @@ add_executable(main main.cpp
         task_queue/BlockingQueue.h
         Utility.h
         DispatchKeepAlive.h
-        DispatchWorkItem.cpp)
+        DispatchWorkItem.cpp
+        DispatchTask.h)
 target_link_libraries(main PRIVATE Folly::folly)
 
 find_package(GTest CONFIG REQUIRED)

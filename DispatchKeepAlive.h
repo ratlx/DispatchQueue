@@ -59,7 +59,10 @@ class DispatchKeepAlive {
     template <typename OtherT>
       requires std::is_convertible_v<OtherT*, T*>
     KeepAlive& operator=(KeepAlive<OtherT>&& other) noexcept {
-      return *this = KeepAlive(std::move(other));
+      if (this == &other) {
+        return *this;
+      }
+      return operator=(KeepAlive(std::move(other)));
     }
 
     ~KeepAlive() { reset(); }

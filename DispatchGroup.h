@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "DispatchKeepAlive.h"
+#include "DispatchQueue.h"
 #include "DispatchWorkItem.h"
 #include "Utility.h"
 
@@ -51,6 +52,7 @@ class DispatchGroup : public DispatchKeepAlive {
     if (taskCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
       notifyCount_.store(mayNotify, std::memory_order_release);
       taskCount_.notify_all();
+
       nextWork_.doNotify();
     }
   }
@@ -68,5 +70,5 @@ class DispatchGroup : public DispatchKeepAlive {
   std::atomic<uint32_t> waitCount_{0};
   std::atomic<uint32_t> notifyCount_{0};
 
-  DispatchNextWork nextWork_{};
+  DispatchNotify nextWork_{};
 };

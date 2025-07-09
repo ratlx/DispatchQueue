@@ -4,9 +4,6 @@
 
 #pragma once
 
-#include <functional>
-#include <memory>
-
 #include "DispatchKeepAlive.h"
 #include "Utility.h"
 #include "task_queue/BlockingQueue.h"
@@ -18,16 +15,16 @@ enum class DispatchAttribute : uint8_t {
 
 class DispatchWorkItem;
 class DispatchGroup;
+class DispatchTask;
 
-class DispatchQueue : public DispatchKeepAlive {
+class DispatchQueue : public DispatchKeepAlive, protected BlockingQueue<DispatchTask> {
  public:
+  ~DispatchQueue() override = default;
+
   virtual void sync(Func<void> func) = 0;
   virtual void sync(DispatchWorkItem& workItem) = 0;
 
   virtual void async(Func<void> func) = 0;
   virtual void async(Func<void> func, DispatchGroup& group) = 0;
   virtual void async(DispatchWorkItem& workItem) = 0;
-
- protected:
-  // virtual void sync(DispatchKeepAlive::KeepAlive<DispatchWorkItem>&) = 0;
 };

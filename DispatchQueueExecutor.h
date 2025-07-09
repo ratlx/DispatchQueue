@@ -9,6 +9,7 @@
 #include <limits>
 
 #include "DispatchQueue.h"
+#include "DispatchTask.h"
 #include "Utility.h"
 #include "task_queue/PrioritySemMPMCQueue.h"
 
