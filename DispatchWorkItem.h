@@ -188,11 +188,13 @@ class DispatchWorkItem : public DispatchKeepAlive {
   void perform();
 
  private:
-  void finish() noexcept {
+  void finish() {
     if (!state_.isFinished.load(std::memory_order_acquire)) {
       state_.isFinished.store(true, std::memory_order_release);
       state_.isFinished.notify_one();
     }
+    // doNitify when finish
+    nextWork_.doNotify();
   }
 
   void checkAndSetWait();
