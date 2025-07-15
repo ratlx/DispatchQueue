@@ -123,7 +123,7 @@ class MPMCQueue {
         tail_(0),
         slots_(nullptr) {}
 
-  explicit MPMCQueue(int capacity, const Allocator& allocator = Allocator())
+  explicit MPMCQueue(size_t capacity, const Allocator& allocator = Allocator())
       : capacity_(capacity), allocator_(allocator), head_(0), tail_(0) {
     if (capacity_ < 1) {
       throw std::invalid_argument("capacity < 1");
