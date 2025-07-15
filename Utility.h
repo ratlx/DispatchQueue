@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 struct Priority {
@@ -14,3 +15,5 @@ struct Priority {
 
 template <typename T>
 using Func = std::function<T(void)>;
+
+const auto now = [] { return std::chrono::steady_clock::now(); };
