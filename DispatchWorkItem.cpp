@@ -10,40 +10,41 @@
 
 #include "DispatchQueue.h"
 #include "DispatchWorkItem.h"
+#include "Utility.h"
 
 DispatchNotify::DispatchNotify(DispatchWorkItem& work, DispatchQueue* ptr)
     : next_(DispatchKeepAlive::getKeepAliveToken(&work)),
       queueKA_(DispatchKeepAlive::getKeepAliveToken(ptr)),
-      notified(NotifyState::workItem) {}
+      notified_(NotifyState::workItem) {}
 
 void DispatchNotify::notify(DispatchQueue* qptr, DispatchWorkItem& work) {
   checkAndSetNotify();
   next_ = DispatchKeepAlive::getKeepAliveToken(&work);
   queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
-  notified.store(NotifyState::workItem, std::memory_order_release);
+  notified_.store(NotifyState::workItem, std::memory_order_release);
 }
 
 void DispatchNotify::doNotify() {
-  auto state = notified.load(std::memory_order_acquire);
+  auto state = notified_.load(std::memory_order_acquire);
   if (state == NotifyState::func) {
     auto queueKA = std::move(queueKA_);
     auto func = std::move(std::get<0>(next_));
-    reinterpret_cast<DispatchQueue*>(queueKA.get())->async(std::move(func));
+    static_cast<DispatchQueue*>(queueKA.get())->async(std::move(func));
   } else if (state == NotifyState::workItem) {
     auto queueKA = std::move(queueKA_);
     auto workItemKA = std::move(std::get<1>(next_));
-    reinterpret_cast<DispatchQueue*>(queueKA.get())
+    static_cast<DispatchQueue*>(queueKA.get())
         ->async(*reinterpret_cast<DispatchWorkItem*>(workItemKA.get()));
   } else {
     return;
   }
-  notified.store(NotifyState::none, std::memory_order_release);
+  notified_.store(NotifyState::none, std::memory_order_release);
 }
 
 bool DispatchWorkItem::tryWait(std::chrono::milliseconds timeout) {
   checkAndSetWait();
-  auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
+  auto deadline = now() + timeout;
+  while (now() < deadline) {
     if (state_.isFinished.load(std::memory_order_acquire))
       return true;
     std::this_thread::yield();

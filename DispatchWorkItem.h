@@ -62,19 +62,19 @@ class DispatchNotify {
   DispatchNotify(const DispatchNotify& other) noexcept
       : next_(other.next_),
         queueKA_(other.queueKA_),
-        notified(other.notified.load(std::memory_order_relaxed)) {}
+        notified_(other.notified_.load(std::memory_order_relaxed)) {}
 
   DispatchNotify(DispatchNotify&& other) noexcept
       : next_(std::move(other.next_)),
         queueKA_(std::move(other.queueKA_)),
-        notified(other.notified.load(std::memory_order_relaxed)) {
-    other.notified.store(NotifyState::none, std::memory_order_relaxed);
+        notified_(other.notified_.load(std::memory_order_relaxed)) {
+    other.notified_.store(NotifyState::none, std::memory_order_relaxed);
   }
 
   DispatchNotify(Func<void> func, DispatchQueue* ptr)
       : next_(std::move(func)),
         queueKA_(DispatchKeepAlive::getKeepAliveToken(ptr)),
-        notified(NotifyState::func) {
+        notified_(NotifyState::func) {
     queueKA_ = DispatchKeepAlive::getKeepAliveToken(ptr);
   }
 
@@ -86,8 +86,8 @@ class DispatchNotify {
     }
     next_ = other.next_;
     queueKA_ = other.queueKA_;
-    notified.store(
-        other.notified.load(std::memory_order_relaxed),
+    notified_.store(
+        other.notified_.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
     return *this;
   }
@@ -98,8 +98,8 @@ class DispatchNotify {
     }
     next_ = std::move(other.next_);
     queueKA_ = std::move(other.queueKA_);
-    notified.store(
-        other.notified.load(std::memory_order_relaxed),
+    notified_.store(
+        other.notified_.load(std::memory_order_relaxed),
         std::memory_order_relaxed);
     return *this;
   }
@@ -110,7 +110,7 @@ class DispatchNotify {
     checkAndSetNotify();
     next_ = std::move(func);
     queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
-    notified.store(NotifyState::func, std::memory_order_release);
+    notified_.store(NotifyState::func, std::memory_order_release);
   }
 
   void doNotify();
@@ -118,7 +118,7 @@ class DispatchNotify {
  private:
   void checkAndSetNotify() {
     auto e = NotifyState::none;
-    if (!notified.compare_exchange_strong(
+    if (!notified_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
       throw std::runtime_error("can't notify twice");
     }
@@ -126,7 +126,7 @@ class DispatchNotify {
 
   std::variant<Func<void>, DispatchKeepAlive::KeepAlive<>> next_{};
   DispatchKeepAlive::KeepAlive<> queueKA_{};
-  std::atomic<NotifyState> notified{NotifyState::none};
+  std::atomic<NotifyState> notified_{NotifyState::none};
 };
 
 class DispatchWorkItem : public DispatchKeepAlive {

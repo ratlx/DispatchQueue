@@ -5,6 +5,7 @@
 #pragma once
 
 #include <atomic>
+#include <iostream>
 #include <semaphore>
 #include <stdexcept>
 #include <utility>
@@ -13,7 +14,6 @@ class DispatchKeepAlive {
  public:
   // not support for dummy or alias
   template <typename T = DispatchKeepAlive>
-    requires std::is_base_of_v<DispatchKeepAlive, T>
   class KeepAlive {
    public:
     KeepAlive() noexcept = default;
@@ -34,9 +34,6 @@ class DispatchKeepAlive {
     template <typename OtherT>
       requires std::is_convertible_v<OtherT*, T*>
     KeepAlive& operator=(const KeepAlive<OtherT>& other) noexcept {
-      if (this == &other) {
-        return *this;
-      }
       return operator=(KeepAlive(other));
     }
 
@@ -59,9 +56,6 @@ class DispatchKeepAlive {
     template <typename OtherT>
       requires std::is_convertible_v<OtherT*, T*>
     KeepAlive& operator=(KeepAlive<OtherT>&& other) noexcept {
-      if (this == &other) {
-        return *this;
-      }
       return operator=(KeepAlive(std::move(other)));
     }
 
@@ -79,9 +73,10 @@ class DispatchKeepAlive {
     T* get() noexcept { return ptr_; }
 
    private:
+    friend class DispatchKeepAlive;
+
     explicit KeepAlive(T* ptr) noexcept : ptr_(ptr) {}
 
-    friend class DispatchKeepAlive;
     T* ptr_{nullptr};
   };
 
@@ -119,7 +114,7 @@ class DispatchKeepAlive {
   }
 
  private:
-  KeepAlive<DispatchKeepAlive> keepAlive_{this};
+  KeepAlive<> keepAlive_{this};
 
   std::atomic<std::size_t> keepAliveCount_{1};
   std::binary_semaphore keepAliveRelease_{0};

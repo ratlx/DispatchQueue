@@ -35,8 +35,8 @@ class DispatchGroup : public DispatchKeepAlive {
   }
 
   bool tryWait(std::chrono::milliseconds timeout) const noexcept {
-    auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline) {
+    auto deadline = now() + timeout;
+    while (now() < deadline) {
       if (taskCount_.load(std::memory_order_relaxed) != 0) {
         return true;
       }
@@ -57,12 +57,12 @@ class DispatchGroup : public DispatchKeepAlive {
     }
   }
 
-  void notify(DispatchQueue* qptr, Func<void> func) {
-    nextWork_.notify(qptr, std::move(func));
+  void notify(DispatchQueue& q, Func<void> func) {
+    nextWork_.notify(&q, std::move(func));
   }
 
-  void notify(DispatchQueue* qptr, DispatchWorkItem& work) {
-    nextWork_.notify(qptr, work);
+  void notify(DispatchQueue& q, DispatchWorkItem& work) {
+    nextWork_.notify(&q, work);
   }
 
  private:

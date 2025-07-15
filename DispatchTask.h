@@ -4,8 +4,9 @@
 
 #pragma once
 
-#include <variant>
 #include <iostream>
+#include <semaphore>
+#include <variant>
 
 #include "DispatchGroup.h"
 #include "DispatchKeepAlive.h"
@@ -15,69 +16,141 @@
 
 class DispatchTask {
  public:
-  enum class TaskType { func, workItem };
+  using TaskVariant =
+      std::variant<Func<void>, DispatchKeepAlive::KeepAlive<DispatchWorkItem>>;
 
-  struct FuncTask {
-    FuncTask() = default;
+  class AsyncTask {
+   public:
+    AsyncTask() = default;
+    explicit AsyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
 
-    explicit FuncTask(Func<void> f) noexcept : func(std::move(f)) {}
+    AsyncTask(Func<void> f, DispatchGroup* g)
+        : task_(std::move(f)),
+          groupKA_(DispatchKeepAlive::getKeepAliveToken(g)) {}
 
-    FuncTask(Func<void> f, DispatchGroup& g)
-        : func(std::move(f)),
-          groupKA(DispatchKeepAlive::getKeepAliveToken(&g)) {}
+    explicit AsyncTask(DispatchWorkItem& w)
+        : task_(DispatchKeepAlive::getKeepAliveToken(&w)) {}
 
-    FuncTask(const FuncTask& other) noexcept = default;
+    AsyncTask(const AsyncTask& other) noexcept = default;
 
-    FuncTask(FuncTask&& other) noexcept
-        : func(std::move(other.func)), groupKA(std::move(other.groupKA)) {}
+    AsyncTask(AsyncTask&& other) noexcept
+        : task_(std::move(other.task_)), groupKA_(std::move(other.groupKA_)) {}
 
-    ~FuncTask() noexcept = default;
+    ~AsyncTask() noexcept = default;
 
-    FuncTask& operator=(const FuncTask& other) noexcept {
-      return operator=(FuncTask(other));
+    AsyncTask& operator=(const AsyncTask& other) noexcept {
+      return operator=(AsyncTask(other));
     }
 
-    FuncTask& operator=(FuncTask&& other) noexcept {
-      func = std::move(other.func);
-      groupKA = std::move(other.groupKA);
+    AsyncTask& operator=(AsyncTask&& other) noexcept {
+      task_ = std::move(other.task_);
+      groupKA_ = std::move(other.groupKA_);
       return *this;
     }
 
     void perform() noexcept {
-      try {
-        func();
-      } catch (const std::exception& ex) {
-        std::cerr << "Task exception: " << ex.what() << std::endl;
-      } catch (...) {
-        std::cerr << "Task exception: unknown error" << std::endl;
-      }
-      if (groupKA) {
-        groupKA->leave();
+      if (task_.index() == 0) {
+        try {
+          std::get<0>(task_)();
+        } catch (const std::exception& ex) {
+          std::cerr << "Task exception: " << ex.what() << std::endl;
+        } catch (...) {
+          std::cerr << "Task exception: unknown error" << std::endl;
+        }
+        if (groupKA_) {
+          groupKA_->leave();
+        }
+      } else {
+        std::get<1>(task_)->perform();
       }
     }
 
-    Func<void> func{nullptr};
-    DispatchKeepAlive::KeepAlive<DispatchGroup> groupKA{};
+   private:
+    TaskVariant task_{nullptr};
+    DispatchKeepAlive::KeepAlive<DispatchGroup> groupKA_{};
   };
 
-  // poison
+  class SyncTask {
+   public:
+    SyncTask() noexcept = default;
+
+    explicit SyncTask(Func<void> f, bool isConcurrent = true) noexcept
+        : task_(std::move(f)),
+          wait_(std::make_shared<std::binary_semaphore>(isConcurrent)) {}
+
+    explicit SyncTask(DispatchWorkItem& w, bool isConcurrent = true) noexcept
+        : task_(DispatchKeepAlive::getKeepAliveToken(&w)),
+          wait_(std::make_shared<std::binary_semaphore>(isConcurrent)) {}
+
+    SyncTask(const SyncTask& other) noexcept = default;
+
+    SyncTask(SyncTask&& other) noexcept
+        : task_(std::move(other.task_)), wait_(std::move(other.wait_)) {}
+
+    ~SyncTask() noexcept = default;
+
+    SyncTask& operator=(const SyncTask& other) = default;
+
+    SyncTask& operator=(SyncTask&& other) noexcept {
+      task_ = std::move(other.task_);
+      wait_ = std::move(other.wait_);
+      return *this;
+    }
+
+    void perform() noexcept {
+      if (wait_) {
+        wait_->acquire();
+      }
+      if (task_.index() == 0) {
+        try {
+          std::get<0>(task_)();
+        } catch (const std::exception& ex) {
+          std::cerr << "Task exception: " << ex.what() << std::endl;
+        } catch (...) {
+          std::cerr << "Task exception: unknown error" << std::endl;
+        }
+      } else {
+        std::get<1>(task_)->perform();
+      }
+    }
+
+   private:
+    friend class DispatchTask;
+
+    TaskVariant task_{nullptr};
+    std::shared_ptr<std::binary_semaphore> wait_{
+        std::make_shared<std::binary_semaphore>(0)};
+  };
+
+  // isPoison
   DispatchTask() = default;
 
-  DispatchTask(Func<void> f, DispatchGroup& g, DispatchQueue* q)
-      : task_(std::in_place_index<0>, std::move(f), g),
-        queueKA_(DispatchKeepAlive::getKeepAliveToken(q)) {}
+  explicit DispatchTask(DispatchQueue* q, Func<void> f, DispatchGroup* g)
+      : task_(AsyncTask(std::move(f), g)),
+        queue_(q) {}
 
-  DispatchTask(DispatchWorkItem& w, DispatchQueue* q)
-      : task_(DispatchKeepAlive::getKeepAliveToken(&w)),
-        queueKA_(DispatchKeepAlive::getKeepAliveToken(q)),
-        taskType_(TaskType::workItem) {}
+  explicit DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync = true)
+      : queue_(q) {
+    if (isAsync) {
+      task_ = AsyncTask(std::move(f));
+    } else {
+      task_ = SyncTask(std::move(f), q->isConcurrent());
+    }
+  }
+
+  DispatchTask(DispatchQueue* q, DispatchWorkItem& w, bool isAsync)
+      : queue_(q) {
+    if (isAsync) {
+      task_ = AsyncTask(w);
+    } else {
+      task_ = SyncTask(w, q->isConcurrent());
+    }
+  }
 
   DispatchTask(const DispatchTask& other) noexcept = default;
 
   DispatchTask(DispatchTask&& other) noexcept
-      : task_(std::move(other.task_)),
-        queueKA_(std::move(other.queueKA_)),
-        taskType_(other.taskType_) {}
+      : task_(std::move(other.task_)), queue_(std::exchange(other.queue_, nullptr)) {}
 
   ~DispatchTask() noexcept = default;
 
@@ -87,24 +160,27 @@ class DispatchTask {
 
   DispatchTask& operator=(DispatchTask&& other) noexcept {
     task_ = std::move(other.task_);
-    queueKA_ = std::move(other.queueKA_);
-    taskType_ = other.taskType_;
+    queue_ = std::exchange(other.queue_, nullptr);
     return *this;
   }
 
-  bool poison() const { return !queueKA_; }
+  bool isPoison() const noexcept { return !queue_; }
 
-  void run() {
-    if (taskType_ == TaskType::func) {
-      std::get<0>(task_).perform();
-    } else if (taskType_ == TaskType::workItem) {
-      std::get<1>(task_)->perform();
+  void perform() {
+    std::visit([](auto&& task) { task.perform(); }, task_);
+  }
+
+  bool isSyncTask() const noexcept { return task_.index() == 1; }
+
+  void notifySync() {
+    if (auto wait = std::get<1>(task_).wait_) {
+      wait->release();
     }
   }
 
  private:
-  std::variant<FuncTask, DispatchKeepAlive::KeepAlive<DispatchWorkItem>>
-      task_{};
-  DispatchKeepAlive::KeepAlive<DispatchQueue> queueKA_{};
-  TaskType taskType_{TaskType::func};
+  friend class DispatchQueueExecutor;
+
+  std::variant<AsyncTask, SyncTask> task_{};
+  DispatchQueue* queue_{};
 };

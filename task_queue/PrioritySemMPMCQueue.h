@@ -57,25 +57,40 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
 
     // this return is just a guess. Thread reuse may obtain elements added by
     // other threads, not elements added by the thread.
-    return writeCount <= readCount_.load(std::memory_order_relaxed);
+    return writeCount <= readCount_.load(std::memory_order_acquire);
   }
 
   BlockingQueueAddResult add(T elem) override { return addWithPriority(std::move(elem), Priority::MID_PRI); }
 
   void take(T& elem) override {
-    readCount_.fetch_add(1, std::memory_order_relaxed);
-    sem_.acquire();
-    elem = std::move(nonBlockingTake().value());
+    readCount_.fetch_add(1, std::memory_order_acq_rel);
+    while (true) {
+      if (auto res = nonBlockingTake()) {
+        elem = std::move(*res);
+        return;
+      }
+      sem_.acquire();
+    }
   }
 
   std::optional<T> tryTake(std::chrono::milliseconds time) noexcept override {
-    readCount_.fetch_add(1, std::memory_order_relaxed);
-    auto deadline = std::chrono::steady_clock::now() + time;
-    if (!sem_.try_acquire_until(deadline)) {
-      readCount_.fetch_sub(1, std::memory_order_relaxed);
-      return std::nullopt;
+    readCount_.fetch_add(1, std::memory_order_acq_rel);
+    auto deadline = now() + time;
+    while (true) {
+      if (auto res = nonBlockingTake()) {
+        return res;
+      }
+      if (!sem_.try_acquire_until(deadline)) {
+        readCount_.fetch_sub(1, std::memory_order_acq_rel);
+        // last try
+        if (sem_.try_acquire()) {
+          // if try again succeed, we should add back
+          readCount_.fetch_add(1, std::memory_order_acq_rel);
+          continue;
+        }
+        return std::nullopt;
+      }
     }
-    return nonBlockingTake();
   }
 
   ssize_t size() const noexcept override {
