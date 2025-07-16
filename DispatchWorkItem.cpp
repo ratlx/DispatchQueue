@@ -25,12 +25,13 @@ void DispatchNotify::notify(DispatchQueue* qptr, DispatchWorkItem& work) {
 }
 
 void DispatchNotify::doNotify() {
-  auto state = notified_.load(std::memory_order_acquire);
-  if (state == NotifyState::func) {
+  auto funcState = NotifyState::func;
+  auto workItemState = NotifyState::workItem;
+  if (notified_.compare_exchange_strong(funcState, NotifyState::notifying, std::memory_order_acq_rel)) {
     auto queueKA = std::move(queueKA_);
     auto func = std::move(std::get<0>(next_));
     static_cast<DispatchQueue*>(queueKA.get())->async(std::move(func));
-  } else if (state == NotifyState::workItem) {
+  } else if (notified_.compare_exchange_strong(workItemState, NotifyState::notifying, std::memory_order_acq_rel)) {
     auto queueKA = std::move(queueKA_);
     auto workItemKA = std::move(std::get<1>(next_));
     static_cast<DispatchQueue*>(queueKA.get())

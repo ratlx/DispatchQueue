@@ -74,13 +74,11 @@ class DispatchTask {
    public:
     SyncTask() noexcept = default;
 
-    explicit SyncTask(Func<void> f, bool isConcurrent = true) noexcept
-        : task_(std::move(f)),
-          wait_(std::make_shared<std::binary_semaphore>(isConcurrent)) {}
+    explicit SyncTask(Func<void> f) noexcept
+        : task_(std::move(f)) {}
 
-    explicit SyncTask(DispatchWorkItem& w, bool isConcurrent = true) noexcept
-        : task_(DispatchKeepAlive::getKeepAliveToken(&w)),
-          wait_(std::make_shared<std::binary_semaphore>(isConcurrent)) {}
+    explicit SyncTask(DispatchWorkItem& w) noexcept
+        : task_(DispatchKeepAlive::getKeepAliveToken(&w)) {}
 
     SyncTask(const SyncTask& other) noexcept = default;
 
@@ -129,12 +127,12 @@ class DispatchTask {
       : task_(AsyncTask(std::move(f), g)),
         queue_(q) {}
 
-  explicit DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync = true)
+  explicit DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync)
       : queue_(q) {
     if (isAsync) {
       task_ = AsyncTask(std::move(f));
     } else {
-      task_ = SyncTask(std::move(f), q->isConcurrent());
+      task_ = SyncTask(std::move(f));
     }
   }
 
@@ -143,7 +141,7 @@ class DispatchTask {
     if (isAsync) {
       task_ = AsyncTask(w);
     } else {
-      task_ = SyncTask(w, q->isConcurrent());
+      task_ = SyncTask(w);
     }
   }
 
