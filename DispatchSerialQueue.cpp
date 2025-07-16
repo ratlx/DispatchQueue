@@ -5,29 +5,26 @@
 #include <semaphore>
 
 #include "DispatchSerialQueue.h"
-
-
 #include "DispatchTask.h"
 #include "Utility.h"
 
-DispatchSerialQueue::DispatchSerialQueue(int8_t priority, bool isActive)
+DispatchSerialQueue::DispatchSerialQueue(std::string label, int8_t priority, bool isActive)
 : DispatchQueue(
+            std::move(label),
             priority,
             isActive ? DispatchAttribute::serial
                      : DispatchAttribute::serial |
-                    DispatchAttribute::initiallyInactive),
-        localTaskQueue_(100),
-        executor_(DispatchQueueExecutor::getGlobalExecutor()) {
-  executor_->registerDispatchQueue(this);
+                    DispatchAttribute::initiallyInactive) {
+  executor_ = DispatchQueueExecutor::getGlobalExecutor();
+  id_ = executor_->registerDispatchQueue(this);
 }
-
 
 DispatchSerialQueue::~DispatchSerialQueue() {
   executor_->deregisterDispatchQueue(this);
   joinKeepAliveOnce();
 }
 
-void DispatchSerialQueue::sync(Func<void> func) {
+void DispatchSerialQueue::sync(Func<void> func) noexcept {
   auto task = DispatchTask(this, std::move(func), false);
   auto res = add(task);
   if (res.notifiable) {
@@ -37,7 +34,7 @@ void DispatchSerialQueue::sync(Func<void> func) {
   notifyNextWork();
 }
 
-void DispatchSerialQueue::sync(DispatchWorkItem& workItem) {
+void DispatchSerialQueue::sync(DispatchWorkItem& workItem) noexcept {
   auto task = DispatchTask(this, workItem, false);
   auto res = add(task);
   if (res.notifiable) {
@@ -83,59 +80,41 @@ void DispatchSerialQueue::activate() {
 }
 
 DispatchQueueAddResult DispatchSerialQueue::add(DispatchTask task) {
-  localTaskQueue_.emplace(std::move(task));
+  std::lock_guard lock{taskQueueLock_};
+  taskQueue_.emplace(std::move(task));
 
   if (inActive_.load(std::memory_order_acquire)) {
     return false;
   }
-  {
-    std::lock_guard lock{threadAttachLock_};
-    taskCount_.release();
-    bool e = false;
-    threadAttach_.compare_exchange_strong(e, true, std::memory_order_acq_rel);
-    return !e;
-  }
-}
-
-std::optional<DispatchTask> DispatchSerialQueue::tryTake(
-    std::chrono::milliseconds timeout) {
-  auto deadline = now() + timeout;
-  while (true) {
-    if (auto res = localTaskQueue_.tryPop()) {
-      return res;
-    }
-    if (!taskCount_.try_acquire_until(deadline)) {
-      std::lock_guard lock{threadAttachLock_};
-      if (!taskCount_.try_acquire()) {
-        threadAttach_.store(false, std::memory_order_release);
-        return std::nullopt;
-      }
-    }
-  }
+  bool e = false;
+  threadAttach_.compare_exchange_strong(e, true, std::memory_order_acq_rel);
+  return !e;
 }
 
 std::optional<DispatchTask> DispatchSerialQueue::tryTake() {
-  while (true) {
-    if (auto res = localTaskQueue_.tryPop()) {
-      return res;
-    }
-    std::lock_guard lock{threadAttachLock_};
-    if (!taskCount_.try_acquire()) {
-      threadAttach_.store(false, std::memory_order_release);
-      return std::nullopt;
-    }
+  std::lock_guard lock{taskQueueLock_};
+  if (!taskQueue_.empty()) {
+    auto task = std::move(taskQueue_.front());
+    taskQueue_.pop();
+    return task;
   }
+  threadAttach_.store(false, std::memory_order_release);
+  return std::nullopt;
 }
 
-
 void DispatchSerialQueue::notifyNextWork() {
-  auto task = tryTake();
-  if (!task) {
+  std::unique_lock lock{taskQueueLock_};
+  if (taskQueue_.empty()) {
+    threadAttach_.store(false, std::memory_order_release);
     return;
   }
-  if (task->isSyncTask()) {
-    task->notifySync();
+  auto task = taskQueue_.front();
+  if (task.isSyncTask()) {
+    taskQueue_.pop();
+    task.notifySync();
   } else {
-    executor_->addWithPriority(std::move(*task), priority_);
+    // we don't need the lock now
+    lock.unlock();
+    executor_->addWithPriority(id_, priority_);
   }
 }

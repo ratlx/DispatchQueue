@@ -7,23 +7,23 @@
 #include <atomic>
 #include <memory>
 #include <optional>
-#include <semaphore>
+#include <string>
+#include <queue>
+#include <mutex>
 
-#include "DispatchKeepAlive.h"
 #include "DispatchQueue.h"
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
-#include "task_queue/MPMCQueue.h"
 #include "Utility.h"
 
 class DispatchSerialQueue : public DispatchQueue {
  public:
-  explicit DispatchSerialQueue(int8_t priority, bool isActive = true);
+  explicit DispatchSerialQueue(std::string label, int8_t priority, bool isActive = true);
 
-  ~DispatchSerialQueue();
+  ~DispatchSerialQueue() final;
 
-  void sync(Func<void> func) override;
-  void sync(DispatchWorkItem& workItem) override;
+  void sync(Func<void> func) noexcept override;
+  void sync(DispatchWorkItem& workItem) noexcept override;
 
   void async(Func<void> func) override;
   void async(Func<void> func, DispatchGroup& group) override;
@@ -33,16 +33,15 @@ class DispatchSerialQueue : public DispatchQueue {
 
  protected:
   DispatchQueueAddResult add(DispatchTask task) override;
-  std::optional<DispatchTask> tryTake(std::chrono::milliseconds) override;
-  std::optional<DispatchTask> tryTake();
+  std::optional<DispatchTask> tryTake() override;
 
  private:
   void notifyNextWork();
 
-  MPMCQueue<DispatchTask> localTaskQueue_;
+  std::queue<DispatchTask> taskQueue_;
+  std::mutex taskQueueLock_;
 
-  std::mutex threadAttachLock_;
-  DispatchKeepAlive::KeepAlive<DispatchQueueExecutor> executor_;
-  std::counting_semaphore<> taskCount_{0};
+  DispatchKeepAlive::KeepAlive<DispatchQueueExecutor> executor_{};
+
   std::atomic<bool> threadAttach_{false};
 };
