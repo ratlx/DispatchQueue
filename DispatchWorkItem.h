@@ -131,7 +131,7 @@ class DispatchNotify {
 
 class DispatchWorkItem : public DispatchKeepAlive {
  public:
-  explicit DispatchWorkItem(Func<void> func) noexcept
+  DispatchWorkItem(Func<void> func) noexcept
       : func_(std::move(func)) {}
 
   DispatchWorkItem(const DispatchWorkItem& other) noexcept
@@ -169,12 +169,12 @@ class DispatchWorkItem : public DispatchKeepAlive {
 
   bool tryWait(std::chrono::milliseconds timeout);
 
-  void notify(DispatchQueue* qptr, Func<void> func) {
-    nextWork_.notify(qptr, std::move(func));
+  void notify(DispatchQueue& q, Func<void> func) {
+    nextWork_.notify(&q, std::move(func));
   }
 
-  void notify(DispatchQueue* qptr, DispatchWorkItem& work) {
-    nextWork_.notify(qptr, work);
+  void notify(DispatchQueue& q, DispatchWorkItem& work) {
+    nextWork_.notify(&q, work);
   }
 
   void cancel() noexcept {

@@ -48,6 +48,9 @@ class DispatchGroup : public DispatchKeepAlive {
   void enter() noexcept { taskCount_.fetch_add(1, std::memory_order_acq_rel); }
 
   void leave() noexcept {
+    if (taskCount_.load(std::memory_order_acquire) == 0) {
+      return;
+    }
     auto mayNotify = waitCount_.load(std::memory_order_acquire);
     if (taskCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
       notifyCount_.store(mayNotify, std::memory_order_release);
@@ -59,6 +62,9 @@ class DispatchGroup : public DispatchKeepAlive {
 
   void notify(DispatchQueue& q, Func<void> func) {
     nextWork_.notify(&q, std::move(func));
+    if (taskCount_.load(std::memory_order_acquire) == 0) {
+      nextWork_.doNotify();
+    }
   }
 
   void notify(DispatchQueue& q, DispatchWorkItem& work) {
