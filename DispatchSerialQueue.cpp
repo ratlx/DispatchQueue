@@ -8,13 +8,14 @@
 #include "DispatchTask.h"
 #include "Utility.h"
 
-DispatchSerialQueue::DispatchSerialQueue(std::string label, int8_t priority, bool isActive)
-: DispatchQueue(
-            std::move(label),
-            priority,
-            isActive ? DispatchAttribute::serial
-                     : DispatchAttribute::serial |
-                    DispatchAttribute::initiallyInactive) {
+DispatchSerialQueue::DispatchSerialQueue(
+    std::string label, int8_t priority, bool isActive)
+    : DispatchQueue(
+          std::move(label),
+          priority,
+          isActive ? DispatchAttribute::serial
+                   : DispatchAttribute::serial |
+                  DispatchAttribute::initiallyInactive) {
   executor_ = DispatchQueueExecutor::getGlobalExecutor();
   id_ = executor_->registerDispatchQueue(this);
 }
@@ -71,9 +72,24 @@ void DispatchSerialQueue::async(Func<void> func, DispatchGroup& group) {
 
 void DispatchSerialQueue::activate() {
   auto e = true;
-  if (inActive_.compare_exchange_strong(e, false, std::memory_order_acq_rel)) {
+  if (isInactive_.compare_exchange_strong(e, false, std::memory_order_acq_rel) && suspendCount_.load(std::memory_order_acquire) <= 0) {
     e = false;
-    if (threadAttach_.compare_exchange_strong(e, true, std::memory_order_acq_rel)) {
+    if (threadAttach_.compare_exchange_strong(
+            e, true, std::memory_order_acq_rel)) {
+      notifyNextWork();
+    }
+  }
+}
+
+void DispatchSerialQueue::suspend() {
+  suspendCount_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void DispatchSerialQueue::resume() {
+  if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1 && !isInactive_.load(std::memory_order_acquire)) {
+    auto e = false;
+    if (threadAttach_.compare_exchange_strong(
+            e, true, std::memory_order_acq_rel)) {
       notifyNextWork();
     }
   }
@@ -83,7 +99,7 @@ DispatchQueueAddResult DispatchSerialQueue::add(DispatchTask task) {
   std::lock_guard lock{taskQueueLock_};
   taskQueue_.emplace(std::move(task));
 
-  if (inActive_.load(std::memory_order_acquire)) {
+  if (isInactive_.load(std::memory_order_acquire) || suspendCount_.load(std::memory_order_acquire) > 0) {
     return false;
   }
   bool e = false;
@@ -101,6 +117,15 @@ std::optional<DispatchTask> DispatchSerialQueue::tryTake() {
   threadAttach_.store(false, std::memory_order_release);
   return std::nullopt;
 }
+
+bool DispatchSerialQueue::executorSuspendCheck() {
+  if (suspendCount_.load(std::memory_order_acquire) > 0) {
+    threadAttach_.store(false, std::memory_order_release);
+    return true;
+  }
+  return false;
+}
+
 
 void DispatchSerialQueue::notifyNextWork() {
   std::unique_lock lock{taskQueueLock_};

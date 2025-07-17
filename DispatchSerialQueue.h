@@ -6,10 +6,10 @@
 
 #include <atomic>
 #include <memory>
-#include <optional>
-#include <string>
-#include <queue>
 #include <mutex>
+#include <optional>
+#include <queue>
+#include <string>
 
 #include "DispatchQueue.h"
 #include "DispatchQueueExecutor.h"
@@ -18,9 +18,10 @@
 
 class DispatchSerialQueue : public DispatchQueue {
  public:
-  explicit DispatchSerialQueue(std::string label, int8_t priority, bool isActive = true);
+  explicit DispatchSerialQueue(
+      std::string label, int8_t priority = Priority::MID_PRI, bool isActive = true);
 
-  ~DispatchSerialQueue() final;
+  ~DispatchSerialQueue() override;
 
   void sync(Func<void> func) noexcept override;
   void sync(DispatchWorkItem& workItem) noexcept override;
@@ -30,10 +31,13 @@ class DispatchSerialQueue : public DispatchQueue {
   void async(DispatchWorkItem& workItem) override;
 
   void activate() override;
+  void suspend() override;
+  void resume() override;
 
  protected:
   DispatchQueueAddResult add(DispatchTask task) override;
   std::optional<DispatchTask> tryTake() override;
+  bool executorSuspendCheck() override;
 
  private:
   void notifyNextWork();

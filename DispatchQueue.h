@@ -40,8 +40,8 @@ class DispatchQueue : public DispatchKeepAlive {
   virtual void async(DispatchWorkItem& workItem) = 0;
 
   virtual void activate() = 0;
-  // virtual void suspend() = 0;
-  // virtual void resume() = 0;
+  virtual void suspend() = 0;
+  virtual void resume() = 0;
 
   bool isConcurrent() const noexcept {
     return attribute_ & DispatchAttribute::concurrent;
@@ -51,26 +51,25 @@ class DispatchQueue : public DispatchKeepAlive {
     return attribute_ & DispatchAttribute::serial;
   }
 
-  std::string getLabel() const noexcept {
-    return label_;
-  }
+  std::string getLabel() const noexcept { return label_; }
 
  protected:
   DispatchQueue(std::string label, int8_t priority, uint8_t attributes)
-  : label_(std::move(label)), priority_(priority), attribute_(attributes) {
+      : label_(std::move(label)), priority_(priority), attribute_(attributes) {
     if (attribute_ & DispatchAttribute::initiallyInactive) {
-      inActive_ = true;
+      isInactive_ = true;
     }
   }
 
   virtual DispatchQueueAddResult add(DispatchTask task) = 0;
-
   virtual std::optional<DispatchTask> tryTake() = 0;
+  virtual bool executorSuspendCheck() = 0;
 
   std::string label_;
   size_t id_{0};
   const int8_t priority_{0};
-  std::atomic<bool> inActive_{false};
+  std::atomic<bool> isInactive_{false};
+  std::atomic<ssize_t> suspendCount_{0};
 
  private:
   friend class DispatchQueueExecutor;
