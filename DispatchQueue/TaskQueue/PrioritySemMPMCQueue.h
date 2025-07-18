@@ -39,24 +39,24 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
   BlockingQueueAddResult addWithPriority(T elem, int8_t priority) override {
     auto mid = getNumPriorities() / 2;
     auto writeCount = writeCount_.fetch_add(1, std::memory_order_relaxed) + 1;
-    std::size_t queue = priority < 0
+    std::size_t idx = priority < 0
         ? std::max(0, mid + priority)
         : std::min(getNumPriorities() - 1, mid + priority);
 
     switch (kBehavior) {
       case QueueBehaviorIfFull::THROW:
-        if (!queues_[queue].tryPush(std::move(elem))) {
+        if (!queues_[idx].tryPush(std::move(elem))) {
           throw std::runtime_error("PrioritySemMPMCQueue full");
         }
         break;
       case QueueBehaviorIfFull::BLOCK:
-        queues_[queue].push(std::move(elem));
+        queues_[idx].push(std::move(elem));
         break;
     }
     sem_.release();
 
     // this return is just a guess. Thread reuse may obtain elements added by
-    // other threads, not elements added by the thread.
+    // other threads, not element added by the current thread.
     return writeCount <= readCount_.load(std::memory_order_acquire);
   }
 
@@ -82,12 +82,6 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
       }
       if (!sem_.try_acquire_until(deadline)) {
         readCount_.fetch_sub(1, std::memory_order_acq_rel);
-        // last try
-        if (sem_.try_acquire()) {
-          // if try again succeed, we should add back
-          readCount_.fetch_add(1, std::memory_order_acq_rel);
-          continue;
-        }
         return std::nullopt;
       }
     }
