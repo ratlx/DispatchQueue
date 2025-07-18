@@ -37,7 +37,7 @@ class DispatchGroup : public DispatchKeepAlive {
   bool tryWait(std::chrono::milliseconds timeout) const noexcept {
     auto deadline = now() + timeout;
     while (now() < deadline) {
-      if (taskCount_.load(std::memory_order_relaxed) != 0) {
+      if (taskCount_.load(std::memory_order_relaxed) == 0) {
         return true;
       }
       std::this_thread::yield();
@@ -45,12 +45,11 @@ class DispatchGroup : public DispatchKeepAlive {
     return false;
   }
 
+  // A call to this function must be balanced with a call to leave(), otherwise cause UB
   void enter() noexcept { taskCount_.fetch_add(1, std::memory_order_acq_rel); }
 
+  // A call to this function must be balanced with a call to enter(), otherwise cause UB
   void leave() noexcept {
-    if (taskCount_.load(std::memory_order_acquire) == 0) {
-      return;
-    }
     auto mayNotify = waitCount_.load(std::memory_order_acquire);
     if (taskCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
       notifyCount_.store(mayNotify, std::memory_order_release);
@@ -72,7 +71,7 @@ class DispatchGroup : public DispatchKeepAlive {
   }
 
  private:
-  std::atomic<uint32_t> taskCount_{0};
+  std::atomic<ssize_t> taskCount_{0};
   std::atomic<uint32_t> waitCount_{0};
   std::atomic<uint32_t> notifyCount_{0};
 

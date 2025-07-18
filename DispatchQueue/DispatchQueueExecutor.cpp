@@ -37,30 +37,29 @@ void DispatchQueueExecutor::join() {
   stopAndJoinAllThreads(true);
 }
 
-std::optional<DispatchQueueExecutor> globalExecutor;
+size_t global_executor_threads = 0;
 
 DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>
 DispatchQueueExecutor::getGlobalExecutor() {
-  static std::mutex lock;
-  {
-    std::lock_guard w{lock};
-    if (!globalExecutor) {
-      globalExecutor.emplace(std::thread::hardware_concurrency(), 3, 100);
-    }
-  }
+  static std::optional<DispatchQueueExecutor> globalExecutor;
+  static std::once_flag once;
+
+  std::call_once(once, [] {
+    globalExecutor.emplace(global_executor_threads ? global_executor_threads : std::thread::hardware_concurrency(), 3, 100);
+  });
+
   return DispatchKeepAlive::getKeepAliveToken(&*globalExecutor);
 }
-
 
 void DispatchQueueExecutor::stop() {
   joinKeepAliveOnce();
   stopAndJoinAllThreads(false);
 }
 
-void DispatchQueueExecutor::addWithPriority(
-    size_t queueId, int8_t priority) {
+void DispatchQueueExecutor::addWithPriority(size_t queueId, int8_t priority) {
   // It's not safe to expect that the executor is alive after a task is added to
-  // the queueId (this task could be holding the last KeepAlive and when finished
+  // the queueId (this task could be holding the last KeepAlive and when
+  // finished
   // - it may unblock the executor shutdown).
   // If we need executor to be alive after adding into the queueId, we have to
   // acquire a KeepAlive.
@@ -100,7 +99,6 @@ DispatchQueueExecutor::getQueueToken(size_t id) {
   return dispatchQueueList_[id];
 }
 
-
 // Idle threads may have destroyed themselves, attempt to join
 // them here
 void DispatchQueueExecutor::ensureJoined() {
@@ -121,7 +119,8 @@ void DispatchQueueExecutor::addThreads(size_t n) {
     newThreads.insert(std::make_shared<Thread>());
   }
   for (const auto& thread : newThreads) {
-    thread->handle = std::thread(std::bind(&DispatchQueueExecutor::threadRun, this, thread));
+    thread->handle =
+        std::thread(std::bind(&DispatchQueueExecutor::threadRun, this, thread));
     threadList_.insert(thread);
   }
   for (const auto& thread : newThreads) {
@@ -197,6 +196,7 @@ std::optional<DispatchTask> DispatchQueueExecutor::takeNextTask(
         return task;
       }
     }
+    queueId = 0;
   }
 
   while (true) {

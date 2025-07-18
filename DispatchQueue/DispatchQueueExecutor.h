@@ -5,12 +5,13 @@
 #pragma once
 
 #include <chrono>
+#include <limits>
+#include <mutex>
 #include <optional>
 #include <set>
-#include <map>
 #include <shared_mutex>
-#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "DispatchKeepAlive.h"
 #include "DispatchQueue.h"
@@ -26,14 +27,12 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
 
     ~Thread() = default;
 
-    bool operator<(const Thread& other) const {
-      return id < other.id;
-    }
+    bool operator<(const Thread& other) const { return id < other.id; }
 
     static std::atomic<size_t> nextId;
+    size_t id;
     std::thread handle;
     std::binary_semaphore startUpSem{0};
-    size_t id;
   };
 
   using ThreadPtr = std::shared_ptr<Thread>;
@@ -45,15 +44,12 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
 
   ~DispatchQueueExecutor();
 
-  void add(DispatchTask task) {
-    addWithPriority(std::move(task), Priority::MID_PRI);
-  }
+  void add(size_t queueId) { addWithPriority(queueId, Priority::MID_PRI); }
+  void addWithPriority(size_t queueId, int8_t priority);
 
-  void addWithPriority(DispatchTask task, int8_t priority);
+  uint8_t getNumPriorities() const { return queueIdQueue_->getNumPriorities(); }
 
-  uint8_t getNumPriorities() const { return taskQueue_->getNumPriorities(); }
-
-  size_t getTaskQueueSize() const noexcept;
+  size_t getQueueSize() const noexcept;
 
   void stop();
   void join();
@@ -61,9 +57,11 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   static DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>
   getGlobalExecutor();
 
-  using DispatchQueueMap = std::map<DispatchQueue*, DispatchKeepAlive::KeepAlive<DispatchQueue>>;
-  void registerDispatchQueue(DispatchQueue*);
+  using DispatchQueueList =
+      std::vector<DispatchKeepAlive::KeepAlive<DispatchQueue>>;
+  size_t registerDispatchQueue(DispatchQueue*);
   void deregisterDispatchQueue(DispatchQueue*);
+  DispatchKeepAlive::KeepAlive<DispatchQueue> getQueueToken(size_t id);
 
  private:
   void ensureJoined();
@@ -74,7 +72,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   void stopThreads(size_t n);
   void stopAndJoinAllThreads(bool isJoin);
 
-  std::optional<DispatchTask> takeNextTask(DispatchQueue* queue);
+  std::optional<DispatchTask> takeNextTask(size_t& queueId);
   bool tryDecrToStop();
   bool tryThreadTimeout();
   bool threadShouldStop(const std::optional<DispatchTask>&);
@@ -88,7 +86,9 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   StoppedThreadQueue stoppedThreadQueue_;
 
   std::shared_mutex dispatchQueueLock_;
-  DispatchQueueMap dispatchQueueMap_;
+  // an empty keepAlive occupies index 0
+  DispatchQueueList dispatchQueueList_{
+      DispatchKeepAlive::KeepAlive<DispatchQueue>()};
 
   // These are only modified while holding threadListLock_, but
   // are read without holding the lock.
@@ -100,7 +100,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   std::atomic<ssize_t> threadsToStop_{0};
   std::atomic<std::chrono::milliseconds> threadTimeout_;
 
-  std::unique_ptr<BlockingQueue<DispatchTask>> taskQueue_;
+  std::unique_ptr<BlockingQueue<size_t>> queueIdQueue_;
 
   bool isJoin_{false};
 };

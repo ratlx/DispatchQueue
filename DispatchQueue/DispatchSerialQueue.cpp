@@ -108,6 +108,9 @@ DispatchQueueAddResult DispatchSerialQueue::add(DispatchTask task) {
 }
 
 std::optional<DispatchTask> DispatchSerialQueue::tryTake() {
+  if (suspendCheck()) {
+    return std::nullopt;
+  }
   std::lock_guard lock{taskQueueLock_};
   if (!taskQueue_.empty()) {
     auto task = std::move(taskQueue_.front());
@@ -118,14 +121,13 @@ std::optional<DispatchTask> DispatchSerialQueue::tryTake() {
   return std::nullopt;
 }
 
-bool DispatchSerialQueue::executorSuspendCheck() {
+bool DispatchSerialQueue::suspendCheck() {
   if (suspendCount_.load(std::memory_order_acquire) > 0) {
     threadAttach_.store(false, std::memory_order_release);
     return true;
   }
   return false;
 }
-
 
 void DispatchSerialQueue::notifyNextWork() {
   std::unique_lock lock{taskQueueLock_};

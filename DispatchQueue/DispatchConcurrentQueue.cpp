@@ -114,10 +114,13 @@ DispatchQueueAddResult DispatchConcurrentQueue::add(DispatchTask task) {
 }
 
 std::optional<DispatchTask> DispatchConcurrentQueue::tryTake() {
+  if (suspendCheck()) {
+    return std::nullopt;
+  }
   return taskQueue_.tryPop();
 }
 
-bool DispatchConcurrentQueue::executorSuspendCheck() {
+bool DispatchConcurrentQueue::suspendCheck() {
   std::lock_guard l{taskLock_};
   if (isSuspend_.load(std::memory_order_relaxed)) {
     taskToAdd_.fetch_add(1, std::memory_order_relaxed);

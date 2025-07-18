@@ -1,30 +1,28 @@
 //
-// Created by 小火锅 on 25-6-27.
+// Created by 小火锅 on 25-6-28.
 //
 
 #pragma once
 
 #include <atomic>
-#include <memory>
 #include <mutex>
 #include <optional>
-#include <queue>
 #include <string>
 
 #include "DispatchQueue.h"
-#include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
+#include "task_queue/MPMCQueue.h"
 #include "Utility.h"
 
-class DispatchSerialQueue : public DispatchQueue {
+class DispatchConcurrentQueue : public DispatchQueue {
  public:
-  explicit DispatchSerialQueue(
+  explicit DispatchConcurrentQueue(
       std::string label, int8_t priority = Priority::MID_PRI, bool isActive = true);
 
-  ~DispatchSerialQueue() override;
+  ~DispatchConcurrentQueue() override;
 
-  void sync(Func<void> func) noexcept override;
-  void sync(DispatchWorkItem& workItem) noexcept override;
+  void sync(Func<void> func) override;
+  void sync(DispatchWorkItem& workItem) override;
 
   void async(Func<void> func) override;
   void async(Func<void> func, DispatchGroup& group) override;
@@ -37,15 +35,13 @@ class DispatchSerialQueue : public DispatchQueue {
  protected:
   DispatchQueueAddResult add(DispatchTask task) override;
   std::optional<DispatchTask> tryTake() override;
-  bool executorSuspendCheck() override;
+  bool suspendCheck() override;
 
  private:
-  void notifyNextWork();
-
-  std::queue<DispatchTask> taskQueue_;
-  std::mutex taskQueueLock_;
+  MPMCQueue<DispatchTask> taskQueue_;
+  std::mutex taskLock_;
+  std::atomic<size_t> taskToAdd_;
+  std::atomic<bool> isSuspend_{false};
 
   DispatchKeepAlive::KeepAlive<DispatchQueueExecutor> executor_{};
-
-  std::atomic<bool> threadAttach_{false};
 };

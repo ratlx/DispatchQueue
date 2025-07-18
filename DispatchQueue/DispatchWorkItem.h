@@ -131,8 +131,7 @@ class DispatchNotify {
 
 class DispatchWorkItem : public DispatchKeepAlive {
  public:
-  DispatchWorkItem(Func<void> func) noexcept
-      : func_(std::move(func)) {}
+  explicit DispatchWorkItem(Func<void> func) noexcept : func_(std::move(func)) {}
 
   DispatchWorkItem(const DispatchWorkItem& other) noexcept
       : func_(other.func_), nextWork_(other.nextWork_), state_(other.state_) {}

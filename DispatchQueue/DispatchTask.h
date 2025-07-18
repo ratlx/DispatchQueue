@@ -74,8 +74,7 @@ class DispatchTask {
    public:
     SyncTask() noexcept = default;
 
-    explicit SyncTask(Func<void> f) noexcept
-        : task_(std::move(f)) {}
+    explicit SyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
 
     explicit SyncTask(DispatchWorkItem& w) noexcept
         : task_(DispatchKeepAlive::getKeepAliveToken(&w)) {}
@@ -124,8 +123,7 @@ class DispatchTask {
   DispatchTask() = default;
 
   explicit DispatchTask(DispatchQueue* q, Func<void> f, DispatchGroup* g)
-      : task_(AsyncTask(std::move(f), g)),
-        queue_(q) {}
+      : task_(AsyncTask(std::move(f), g)), queue_(q) {}
 
   explicit DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync)
       : queue_(q) {
@@ -148,7 +146,8 @@ class DispatchTask {
   DispatchTask(const DispatchTask& other) noexcept = default;
 
   DispatchTask(DispatchTask&& other) noexcept
-      : task_(std::move(other.task_)), queue_(std::exchange(other.queue_, nullptr)) {}
+      : task_(std::move(other.task_)),
+        queue_(std::exchange(other.queue_, nullptr)) {}
 
   ~DispatchTask() noexcept = default;
 
