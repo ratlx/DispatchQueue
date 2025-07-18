@@ -47,8 +47,8 @@ class alignas(hardware_destructive_interference_size) Slot {
    private:
     friend class Slot<T>;
 
-    std::atomic<std::size_t> readTicket_;
-    std::atomic<std::size_t> writeTicket_;
+    std::atomic<std::size_t> readTicket_{0};
+    std::atomic<std::size_t> writeTicket_{0};
   };
 
  public:
@@ -217,9 +217,8 @@ class MPMCQueue {
           return true;
         }
       } else {
-        const auto prevHead = head;
         head = head_.load(std::memory_order_acquire);
-        if (prevHead == head) {
+        if (head >= capacity_ && head - capacity_ >= tail_.load(std::memory_order_acquire)) {
           return false;
         }
       }
@@ -260,9 +259,9 @@ class MPMCQueue {
           return res;
         }
       } else {
-        const auto prevTail = tail;
         tail = tail_.load(std::memory_order_acquire);
-        if (tail == prevTail) {
+        // if any thread is producing, wait for it. we may read it.
+        if (head_.load(std::memory_order_acquire) <= tail) {
           return std::nullopt;
         }
       }
