@@ -16,5 +16,5 @@ find_package(GTest CONFIG REQUIRED)
 get_target_property(GTEST_PATH GTest::gtest LOCATION)
 get_filename_component(GTEST_DIR "${GTEST_PATH}" DIRECTORY)
 
-add_subdirectory(task_queue)
+add_subdirectory(TaskQueue)
 add_subdirectory(tests)

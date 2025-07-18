@@ -16,9 +16,9 @@
 #include "DispatchKeepAlive.h"
 #include "DispatchQueue.h"
 #include "DispatchTask.h"
+#include "TaskQueue/MPMCQueue.h"
+#include "TaskQueue/PrioritySemMPMCQueue.h"
 #include "Utility.h"
-#include "task_queue/MPMCQueue.h"
-#include "task_queue/PrioritySemMPMCQueue.h"
 
 class DispatchQueueExecutor : public DispatchKeepAlive {
  public:
@@ -47,7 +47,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   void add(size_t queueId) { addWithPriority(queueId, Priority::MID_PRI); }
   void addWithPriority(size_t queueId, int8_t priority);
 
-  uint8_t getNumPriorities() const { return queueIdQueue_->getNumPriorities(); }
+  uint8_t getNumPriorities() const { return queueIdQueue_.getNumPriorities(); }
 
   size_t getQueueSize() const noexcept;
 
@@ -100,7 +100,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   std::atomic<ssize_t> threadsToStop_{0};
   std::atomic<std::chrono::milliseconds> threadTimeout_;
 
-  std::unique_ptr<BlockingQueue<size_t>> queueIdQueue_;
+  PrioritySemMPMCQueue<size_t, QueueBehaviorIfFull::BLOCK> queueIdQueue_;
 
   bool isJoin_{false};
 };

@@ -11,8 +11,8 @@
 #include "DispatchKeepAlive.h"
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
+#include "TaskQueue/PrioritySemMPMCQueue.h"
 #include "Utility.h"
-#include "task_queue/PrioritySemMPMCQueue.h"
 
 static auto threadtimeout_ms = std::chrono::milliseconds(60000);
 
@@ -23,9 +23,7 @@ DispatchQueueExecutor::DispatchQueueExecutor(
     : stoppedThreadQueue_(maxQueueSize),
       maxThreads_(numThreads),
       threadTimeout_(threadtimeout_ms),
-      queueIdQueue_(
-          std::make_unique<PrioritySemMPMCQueue<size_t>>(
-              numPriorities, maxQueueSize)) {}
+      queueIdQueue_(numPriorities, maxQueueSize) {}
 
 DispatchQueueExecutor::~DispatchQueueExecutor() {
   joinKeepAliveOnce();
@@ -37,15 +35,13 @@ void DispatchQueueExecutor::join() {
   stopAndJoinAllThreads(true);
 }
 
-size_t global_executor_threads = 0;
-
 DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>
 DispatchQueueExecutor::getGlobalExecutor() {
   static std::optional<DispatchQueueExecutor> globalExecutor;
   static std::once_flag once;
 
   std::call_once(once, [] {
-    globalExecutor.emplace(global_executor_threads ? global_executor_threads : std::thread::hardware_concurrency(), 3, 100);
+    globalExecutor.emplace(std::thread::hardware_concurrency(), 3, 100);
   });
 
   return DispatchKeepAlive::getKeepAliveToken(&*globalExecutor);
@@ -69,7 +65,7 @@ void DispatchQueueExecutor::addWithPriority(size_t queueId, int8_t priority) {
   DispatchKeepAlive::KeepAlive<> ka =
       mayNeedToAddThreads ? getKeepAliveToken(this) : KeepAlive<>();
 
-  auto result = queueIdQueue_->addWithPriority(queueId, priority);
+  auto result = queueIdQueue_.addWithPriority(queueId, priority);
 
   if (mayNeedToAddThreads && !result.reusedThread) {
     ensureActiveThreads();
@@ -77,7 +73,7 @@ void DispatchQueueExecutor::addWithPriority(size_t queueId, int8_t priority) {
 }
 
 size_t DispatchQueueExecutor::getQueueSize() const noexcept {
-  return queueIdQueue_->size();
+  return queueIdQueue_.size();
 }
 
 size_t DispatchQueueExecutor::registerDispatchQueue(DispatchQueue* q) {
@@ -168,7 +164,7 @@ void DispatchQueueExecutor::ensureActiveThreads() {
 void DispatchQueueExecutor::stopThreads(size_t n) {
   threadsToStop_.fetch_add(static_cast<ssize_t>(n));
   for (size_t i = 0; i < n; ++i) {
-    queueIdQueue_->addWithPriority(0, Priority::LO_PRI);
+    queueIdQueue_.addWithPriority(0, Priority::LO_PRI);
   }
 }
 
@@ -200,7 +196,7 @@ std::optional<DispatchTask> DispatchQueueExecutor::takeNextTask(
   }
 
   while (true) {
-    auto id = queueIdQueue_->tryTake(threadTimeout_);
+    auto id = queueIdQueue_.tryTake(threadTimeout_);
     if (!id || *id == 0) {
       return std::nullopt;
     }

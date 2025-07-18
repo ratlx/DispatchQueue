@@ -54,7 +54,7 @@ void DispatchConcurrentQueue::async(DispatchWorkItem& work) {
   }
 }
 
-void DispatchConcurrentQueue::async(Func<void> func, DispatchGroup& group) {
+void DispatchConcurrentQueue:: async(Func<void> func, DispatchGroup& group) {
   group.enter();
   auto task = DispatchTask(this, std::move(func), &group);
   auto res = add(std::move(task));
@@ -117,7 +117,11 @@ std::optional<DispatchTask> DispatchConcurrentQueue::tryTake() {
   if (suspendCheck()) {
     return std::nullopt;
   }
-  return taskQueue_.tryPop();
+  if (auto task = taskQueue_.tryPop()) {
+    return task;
+  }
+  // executor_->addWithPriority(id_, priority_);
+  return std::nullopt;
 }
 
 bool DispatchConcurrentQueue::suspendCheck() {
