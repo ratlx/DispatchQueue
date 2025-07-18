@@ -1,26 +1,11 @@
-cmake_minimum_required(VERSION 3.31)
-project(DispatchQueue)
+cmake_minimum_required(VERSION 3.28)
+project(DispatchQueue LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
-#set(CMAKE_CXX_FLAGS "-Ofast")
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(folly CONFIG REQUIRED)
-add_executable(main main.cpp
-        task_queue/MPMCQueue.h
-        task_queue/BlockingQueue.h
-        Utility.h
-        DispatchKeepAlive.h
-        DispatchWorkItem.cpp
-        DispatchTask.h)
-target_link_libraries(main PRIVATE Folly::folly)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-find_package(GTest CONFIG REQUIRED)
-add_executable(MPMCQueueTest task_queue/tests/MPMCQueueTest.cpp
-        task_queue/MPMCQueue.h
-        task_queue/BlockingQueue.h)
-target_link_libraries(MPMCQueueTest PRIVATE GTest::gtest)
-add_executable(PSMPMCQueueTest task_queue/tests/PrioritySemMPMCQueueTest.cpp
-        task_queue/PrioritySemMPMCQueue.h
-        task_queue/BlockingQueue.h
-        Utility.h)
-target_link_libraries(PSMPMCQueueTest PRIVATE GTest::gtest)
+add_subdirectory(DispatchQueue)
