@@ -67,7 +67,7 @@ class DispatchTask {
     }
 
    private:
-    TaskVariant task_{nullptr};
+    TaskVariant task_{Func<void>(nullptr)};
     DispatchKeepAlive::KeepAlive<DispatchGroup> groupKA_{};
   };
 
@@ -179,6 +179,6 @@ class DispatchTask {
  private:
   friend class DispatchQueueExecutor;
 
-  std::variant<AsyncTask, SyncTask> task_{};
+  std::variant<AsyncTask, SyncTask> task_{AsyncTask()};
   DispatchQueue* queue_{};
 };
