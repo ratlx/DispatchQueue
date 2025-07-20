@@ -82,6 +82,11 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
       }
       if (!sem_.try_acquire_until(deadline)) {
         readCount_.fetch_sub(1, std::memory_order_acq_rel);
+        // try again
+        if (sem_.try_acquire()) {
+          readCount_.fetch_add(1, std::memory_order_seq_cst);
+          continue;
+        }
         return std::nullopt;
       }
     }

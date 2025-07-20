@@ -6,7 +6,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 
+// In GCD, quality of service (QoS) is used to describe how important a task is.
+// QoS involves OS-level settings. For cross-platform needs and simplicity,
+// only priority is used to describe the importance of the task
 struct Priority {
   static constexpr int8_t LO_PRI = INT8_MIN;
   static constexpr int8_t MID_PRI = 0;

@@ -114,7 +114,7 @@ TEST(SerialQueue, Activate) {
 
 TEST(SerialQueue, Suspend) {
   cnt = 0;
-  int n = 1000;
+  const int n = 1000;
   auto sq = DispatchSerialQueue("sq");
   auto g = DispatchGroup();
   binary_semaphore sem1{0};

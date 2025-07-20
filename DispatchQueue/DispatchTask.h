@@ -7,6 +7,7 @@
 #include <iostream>
 #include <semaphore>
 #include <variant>
+#include <memory>
 
 #include "DispatchGroup.h"
 #include "DispatchKeepAlive.h"
