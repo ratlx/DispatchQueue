@@ -105,6 +105,33 @@ TEST(ConcurrentTest, MultiProducers) {
   EXPECT_EQ(cnt, n * m);
 }
 
+TEST(ConcurrentTest, Suspend) {
+  auto cq = DispatchConcurrentQueue("cq", 0, true);
+  auto cg = DispatchGroup();
+  atomic<int> cnt{0};
+  const int n = thread::hardware_concurrency() * 2;
+  binary_semaphore sem1{0};
+
+  thread t {[&] {
+    sem1.acquire();
+    cq.suspend();
+  }};
+  for (int i = 0; i < n; ++i) {
+    cq.async([&] {
+      if (cnt.fetch_add(1) == n / 2) {
+        sem1.release();
+      }
+      this_thread::sleep_for(chrono::milliseconds(10));
+    }, cg);
+  }
+  t.join();
+  EXPECT_GE(cnt, n / 2 + 1);
+  EXPECT_LT(cnt, n);
+  cq.resume();
+  cg.wait();
+  EXPECT_EQ(cnt, n);
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
