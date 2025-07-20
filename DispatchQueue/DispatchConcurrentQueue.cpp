@@ -66,7 +66,7 @@ void DispatchConcurrentQueue:: async(Func<void> func, DispatchGroup& group) {
 void DispatchConcurrentQueue::activate() {
   size_t n = 0;
   {
-    std::lock_guard l{taskLock_};
+    std::unique_lock l{taskLock_};
     bool e = true;
     if (isInactive_.compare_exchange_strong(
             e, false, std::memory_order_relaxed) && !isSuspend_.load(std::memory_order_relaxed)) {
@@ -89,7 +89,7 @@ void DispatchConcurrentQueue::suspend() {
 void DispatchConcurrentQueue::resume() {
   size_t n = 0;
   if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-    std::lock_guard l{taskLock_};
+    std::unique_lock l{taskLock_};
     isSuspend_.store(false, std::memory_order_release);
     // wake up all the sync task
     isSuspend_.notify_all();
@@ -103,7 +103,7 @@ void DispatchConcurrentQueue::resume() {
 DispatchQueueAddResult DispatchConcurrentQueue::add(DispatchTask task) {
   bool notifiable = true;
   {
-    std::lock_guard l{taskLock_};
+    std::shared_lock l{taskLock_};
     if (isInactive_.load(std::memory_order_relaxed) || isSuspend_.load(std::memory_order_relaxed)) {
       taskToAdd_.fetch_add(1, std::memory_order_relaxed);
       notifiable = false;
@@ -120,12 +120,11 @@ std::optional<DispatchTask> DispatchConcurrentQueue::tryTake() {
   if (auto task = taskQueue_.tryPop()) {
     return task;
   }
-  // executor_->addWithPriority(id_, priority_);
   return std::nullopt;
 }
 
 bool DispatchConcurrentQueue::suspendCheck() {
-  std::lock_guard l{taskLock_};
+  std::shared_lock l{taskLock_};
   if (isSuspend_.load(std::memory_order_relaxed)) {
     taskToAdd_.fetch_add(1, std::memory_order_relaxed);
     return true;

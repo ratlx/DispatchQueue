@@ -5,7 +5,7 @@
 #pragma once
 
 #include <atomic>
-#include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <string>
 
@@ -39,7 +39,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
 
  private:
   MPMCQueue<DispatchTask> taskQueue_;
-  std::mutex taskLock_;
+  std::shared_mutex taskLock_;
   std::atomic<size_t> taskToAdd_;
   std::atomic<bool> isSuspend_{false};
 
