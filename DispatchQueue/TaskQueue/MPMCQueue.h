@@ -27,23 +27,35 @@ class alignas(hardware_destructive_interference_size) Slot {
    public:
     TicketDispenser() noexcept = default;
 
-    void completeTurn(std::size_t ticket, SlotAction type) noexcept {
-      auto& turn = type == SlotAction::read ? writeTicket_ : readTicket_;
-      turn.store(
-          ticket + (type == SlotAction::read ? 0 : 1),
-          std::memory_order_release);
-      turn.notify_all();
-    }
-
-    void waitForTurn(std::size_t ticket, SlotAction type) const noexcept {
-      auto& turn = type == SlotAction::read ? readTicket_ : writeTicket_;
-      auto currentTurn = turn.load(std::memory_order_acquire);
+    void waitForReadTurn(std::size_t ticket, SlotAction type) const noexcept {
+      auto currentTurn = readTicket_.load(std::memory_order_acquire);
       while (ticket != currentTurn) {
-        turn.wait(currentTurn, std::memory_order_acquire);
-        currentTurn = turn.load(std::memory_order_acquire);
+        readTicket_.wait(currentTurn, std::memory_order_acquire);
+        currentTurn = readTicket_.load(std::memory_order_acquire);
       }
     }
 
+    void waitForWriteTurn(std::size_t ticket, SlotAction type) const noexcept {
+      auto currentTurn = writeTicket_.load(std::memory_order_acquire);
+      while (ticket != currentTurn) {
+        writeTicket_.wait(currentTurn, std::memory_order_acquire);
+        currentTurn = writeTicket_.load(std::memory_order_acquire);
+      }
+    }
+
+    void completeReadTurn(std::size_t ticket, SlotAction type) noexcept {
+      writeTicket_.store(
+          ticket + (type == SlotAction::read ? 0 : 1),
+          std::memory_order_release);
+      writeTicket_.notify_all();
+    }
+
+    void completeWriteTurn(std::size_t ticket, SlotAction type) noexcept {
+      readTicket_.store(
+          ticket + (type == SlotAction::read ? 0 : 1),
+          std::memory_order_release);
+      readTicket_.notify_all();
+    }
    private:
     friend class Slot<T>;
 
@@ -64,19 +76,19 @@ class alignas(hardware_destructive_interference_size) Slot {
     requires std::is_nothrow_constructible_v<T, Args&&...>
   void write(std::size_t ticket, bool noWait, Args&&... args) noexcept {
     if (!noWait) {
-      ticketDispenser_.waitForTurn(ticket, SlotAction::write);
+      ticketDispenser_.waitForWriteTurn(ticket, SlotAction::write);
     }
     construct(std::forward<Args>(args)...);
-    ticketDispenser_.completeTurn(ticket, SlotAction::write);
+    ticketDispenser_.completeWriteTurn(ticket, SlotAction::write);
   }
 
   void read(std::size_t ticket, bool noWait, T& elem) noexcept {
     if (!noWait) {
-      ticketDispenser_.waitForTurn(ticket, SlotAction::read);
+      ticketDispenser_.waitForReadTurn(ticket, SlotAction::read);
     }
     elem = reinterpret_cast<T&&>(storage_);
     destroy();
-    ticketDispenser_.completeTurn(ticket, SlotAction::read);
+    ticketDispenser_.completeReadTurn(ticket, SlotAction::read);
   }
 
   bool writable(std::size_t ticket) const noexcept {
