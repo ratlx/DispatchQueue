@@ -27,7 +27,7 @@ DispatchSerialQueue::~DispatchSerialQueue() {
 
 void DispatchSerialQueue::sync(Func<void> func) noexcept {
   auto task = DispatchTask(this, std::move(func), false);
-  auto res = add(task);
+  auto res = add(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -37,7 +37,7 @@ void DispatchSerialQueue::sync(Func<void> func) noexcept {
 
 void DispatchSerialQueue::sync(DispatchWorkItem& workItem) noexcept {
   auto task = DispatchTask(this, workItem, false);
-  auto res = add(task);
+  auto res = add(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -46,16 +46,14 @@ void DispatchSerialQueue::sync(DispatchWorkItem& workItem) noexcept {
 }
 
 void DispatchSerialQueue::async(DispatchWorkItem& workItem) {
-  auto task = DispatchTask(this, workItem, true);
-  auto res = add(std::move(task));
+  auto res = add(workItem, true);
   if (res.notifiable) {
     notifyNextWork();
   }
 }
 
 void DispatchSerialQueue::async(Func<void> func) {
-  auto task = DispatchTask(this, std::move(func), true);
-  auto res = add(std::move(task));
+  auto res = add(std::move(func), true);
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -63,8 +61,7 @@ void DispatchSerialQueue::async(Func<void> func) {
 
 void DispatchSerialQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto task = DispatchTask(this, std::move(func), &group);
-  auto res = add(std::move(task));
+  auto res = add(std::move(func), &group);
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -95,9 +92,10 @@ void DispatchSerialQueue::resume() {
   }
 }
 
-DispatchQueueAddResult DispatchSerialQueue::add(DispatchTask task) {
+template <typename... Args>
+DispatchQueueAddResult DispatchSerialQueue::add(Args&&... args) {
   std::lock_guard lock{taskQueueLock_};
-  taskQueue_.emplace(std::move(task));
+  taskQueue_.emplace(this, std::forward<Args>(args)...);
 
   if (isInactive_.load(std::memory_order_acquire) || suspendCount_.load(std::memory_order_acquire) > 0) {
     return false;

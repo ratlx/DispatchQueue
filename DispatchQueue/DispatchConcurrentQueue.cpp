@@ -28,6 +28,7 @@ void DispatchConcurrentQueue::sync(Func<void> func) {
   auto task = DispatchTask(this, std::move(func), false);
   isInactive_.wait(true);
   isSuspend_.wait(true);
+  // notify itself
   task.notifySync();
   task.perform();
 }
@@ -39,25 +40,22 @@ void DispatchConcurrentQueue::sync(DispatchWorkItem& workItem) {
 }
 
 void DispatchConcurrentQueue::async(Func<void> func) {
-  auto task = DispatchTask(this, std::move(func), true);
-  auto res = add(std::move(task));
+  auto res = add(std::move(func), true);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }
 }
 
 void DispatchConcurrentQueue::async(DispatchWorkItem& work) {
-  auto task = DispatchTask(this, work, true);
-  auto res = add(std::move(task));
+  auto res = add(work, true);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }
 }
 
-void DispatchConcurrentQueue:: async(Func<void> func, DispatchGroup& group) {
+void DispatchConcurrentQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto task = DispatchTask(this, std::move(func), &group);
-  auto res = add(std::move(task));
+  auto res = add(std::move(func), &group);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }
@@ -100,7 +98,8 @@ void DispatchConcurrentQueue::resume() {
   }
 }
 
-DispatchQueueAddResult DispatchConcurrentQueue::add(DispatchTask task) {
+template <typename... Args>
+DispatchQueueAddResult DispatchConcurrentQueue::add(Args&&... args) {
   bool notifiable = true;
   {
     std::shared_lock l{taskLock_};
@@ -109,7 +108,7 @@ DispatchQueueAddResult DispatchConcurrentQueue::add(DispatchTask task) {
       notifiable = false;
     }
   }
-  taskQueue_.emplace(std::move(task));
+  taskQueue_.emplace(this, std::forward<Args>(args)...);
   return notifiable;
 }
 

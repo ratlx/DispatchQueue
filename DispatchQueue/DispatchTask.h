@@ -5,9 +5,9 @@
 #pragma once
 
 #include <iostream>
+#include <memory>
 #include <semaphore>
 #include <variant>
-#include <memory>
 
 #include "DispatchGroup.h"
 #include "DispatchKeepAlive.h"
@@ -19,6 +19,7 @@ class DispatchTask {
  public:
   using TaskVariant =
       std::variant<Func<void>, DispatchKeepAlive::KeepAlive<DispatchWorkItem>>;
+  using WaitSem = std::shared_ptr<std::binary_semaphore>;
 
   class AsyncTask {
    public:
@@ -80,6 +81,8 @@ class DispatchTask {
     explicit SyncTask(DispatchWorkItem& w) noexcept
         : task_(DispatchKeepAlive::getKeepAliveToken(&w)) {}
 
+    explicit SyncTask(WaitSem wait) noexcept : wait_(std::move(wait)) {}
+
     SyncTask(const SyncTask& other) noexcept = default;
 
     SyncTask(SyncTask&& other) noexcept
@@ -115,18 +118,17 @@ class DispatchTask {
    private:
     friend class DispatchTask;
 
-    TaskVariant task_{nullptr};
-    std::shared_ptr<std::binary_semaphore> wait_{
-        std::make_shared<std::binary_semaphore>(0)};
+    TaskVariant task_{Func<void>(nullptr)};
+    WaitSem wait_{std::make_shared<std::binary_semaphore>(0)};
   };
 
   // isPoison
   DispatchTask() = default;
 
-  explicit DispatchTask(DispatchQueue* q, Func<void> f, DispatchGroup* g)
+  DispatchTask(DispatchQueue* q, Func<void> f, DispatchGroup* g) noexcept
       : task_(AsyncTask(std::move(f), g)), queue_(q) {}
 
-  explicit DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync)
+  DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync) noexcept
       : queue_(q) {
     if (isAsync) {
       task_ = AsyncTask(std::move(f));
@@ -135,7 +137,7 @@ class DispatchTask {
     }
   }
 
-  DispatchTask(DispatchQueue* q, DispatchWorkItem& w, bool isAsync)
+  DispatchTask(DispatchQueue* q, DispatchWorkItem& w, bool isAsync) noexcept
       : queue_(q) {
     if (isAsync) {
       task_ = AsyncTask(w);
@@ -143,6 +145,10 @@ class DispatchTask {
       task_ = SyncTask(w);
     }
   }
+
+  DispatchTask(
+      DispatchQueue* q, std::shared_ptr<std::binary_semaphore> wait) noexcept
+      : queue_(q), task_(SyncTask(std::move(wait))) {}
 
   DispatchTask(const DispatchTask& other) noexcept = default;
 
@@ -171,9 +177,19 @@ class DispatchTask {
   bool isSyncTask() const noexcept { return task_.index() == 1; }
 
   void notifySync() {
+    if (!isSyncTask()) {
+      throw std::runtime_error("must be sync task");
+    }
     if (auto wait = std::get<1>(task_).wait_) {
       wait->release();
     }
+  }
+
+  WaitSem getWaitSem() {
+    if (!isSyncTask()) {
+      throw std::runtime_error("must be sync task");
+    }
+    return std::get<1>(task_).wait_;
   }
 
  private:

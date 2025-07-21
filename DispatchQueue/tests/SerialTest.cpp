@@ -22,13 +22,18 @@ void add() {
 TEST(SerialQueue, Sync) {
   auto sq = DispatchSerialQueue("sq");
   cnt = 0;
-  const int n = 1000;
-  sq.sync([&] {
-    for (int i = 0; i < n; ++i) {
-      ++cnt;
-    }
+  sq.async([] {
+    this_thread::sleep_for(chrono::milliseconds(10));
+    add();
   });
-  EXPECT_EQ(cnt, n);
+  sq.sync([] {
+    EXPECT_EQ(cnt, 1);
+    add();
+  });
+  auto w = DispatchWorkItem([] {
+    EXPECT_EQ(cnt, 2);
+  });
+  sq.sync(w);
 }
 
 TEST(SerialQueue, Async) {

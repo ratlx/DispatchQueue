@@ -61,7 +61,6 @@ class DispatchQueue : public DispatchKeepAlive {
     }
   }
 
-  virtual DispatchQueueAddResult add(DispatchTask task) = 0;
   virtual std::optional<DispatchTask> tryTake() = 0;
   virtual bool suspendCheck() = 0;
 

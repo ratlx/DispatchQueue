@@ -19,7 +19,9 @@
 class DispatchSerialQueue : public DispatchQueue {
  public:
   explicit DispatchSerialQueue(
-      std::string label, int8_t priority = Priority::MID_PRI, bool isActive = true);
+      std::string label,
+      int8_t priority = Priority::MID_PRI,
+      bool isActive = true);
 
   ~DispatchSerialQueue() override;
 
@@ -35,7 +37,9 @@ class DispatchSerialQueue : public DispatchQueue {
   void resume() override;
 
  protected:
-  DispatchQueueAddResult add(DispatchTask task) override;
+  template <typename... Args>
+  DispatchQueueAddResult add(Args&&... args);
+
   std::optional<DispatchTask> tryTake() override;
   bool suspendCheck() override;
 

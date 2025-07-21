@@ -5,8 +5,8 @@
 #pragma once
 
 #include <atomic>
-#include <shared_mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 
 #include "DispatchQueue.h"
@@ -17,7 +17,9 @@
 class DispatchConcurrentQueue : public DispatchQueue {
  public:
   explicit DispatchConcurrentQueue(
-      std::string label, int8_t priority = Priority::MID_PRI, bool isActive = true);
+      std::string label,
+      int8_t priority = Priority::MID_PRI,
+      bool isActive = true);
 
   ~DispatchConcurrentQueue() override;
 
@@ -33,7 +35,9 @@ class DispatchConcurrentQueue : public DispatchQueue {
   void resume() override;
 
  protected:
-  DispatchQueueAddResult add(DispatchTask task) override;
+  template <typename... Args>
+  DispatchQueueAddResult add(Args&&... args);
+
   std::optional<DispatchTask> tryTake() override;
   bool suspendCheck() override;
 
