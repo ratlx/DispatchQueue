@@ -11,6 +11,7 @@
 #include <optional>
 #include <stdexcept>
 
+namespace detail {
 #if defined(__cpp_lib_hardware_interference_size)
 using std::hardware_destructive_interference_size;
 #else
@@ -20,11 +21,11 @@ constexpr std::size_t hardware_destructive_interference_size = 64;
 template <typename T>
   requires std::is_nothrow_destructible_v<T>
 class alignas(hardware_destructive_interference_size) Slot {
- private:
+  private:
   enum class SlotAction { read, write };
 
   class TicketDispenser {
-   public:
+  public:
     TicketDispenser() noexcept = default;
 
     void waitForReadTurn(std::size_t ticket, SlotAction type) const noexcept {
@@ -56,14 +57,14 @@ class alignas(hardware_destructive_interference_size) Slot {
           std::memory_order_release);
       readTicket_.notify_all();
     }
-   private:
+  private:
     friend class Slot<T>;
 
     std::atomic<std::size_t> readTicket_{0};
     std::atomic<std::size_t> writeTicket_{0};
   };
 
- public:
+  public:
   Slot() noexcept = default;
 
   ~Slot() noexcept {
@@ -114,12 +115,13 @@ class alignas(hardware_destructive_interference_size) Slot {
 
   void destroy() noexcept { reinterpret_cast<T*>(&storage_)->~T(); }
 
- private:
+  private:
   TicketDispenser ticketDispenser_;
   std::aligned_storage_t<sizeof(T), alignof(T)> storage_;
 };
+}
 
-template <typename T, typename Allocator = std::allocator<Slot<T>>>
+template <typename T, typename Allocator = std::allocator<detail::Slot<T>>>
   requires std::is_nothrow_destructible_v<T>
 class MPMCQueue {
   static_assert(
@@ -145,27 +147,27 @@ class MPMCQueue {
     // Allocators are not required to honor alignment for over-aligned types
     // (see http://eel.is/c++draft/allocator.requirements#10) so we verify
     // alignment here
-    if (reinterpret_cast<size_t>(slots_) % alignof(Slot<T>) != 0) {
+    if (reinterpret_cast<size_t>(slots_) % alignof(detail::Slot<T>) != 0) {
       allocator_.deallocate(slots_, capacity_ + 1);
       throw std::bad_alloc();
     }
     for (size_t i = 0; i < capacity_; ++i) {
-      new (&slots_[i]) Slot<T>();
+      new (&slots_[i]) detail::Slot<T>();
     }
     static_assert(
-        alignof(Slot<T>) == hardware_destructive_interference_size,
+        alignof(detail::Slot<T>) == detail::hardware_destructive_interference_size,
         "Slot must be aligned to cache line boundary to prevent false sharing");
     static_assert(
-        sizeof(Slot<T>) % hardware_destructive_interference_size == 0,
+        sizeof(detail::Slot<T>) % detail::hardware_destructive_interference_size == 0,
         "Slot size must be a multiple of cache line size to prevent "
         "false sharing between adjacent slots");
     static_assert(
-        sizeof(MPMCQueue) % hardware_destructive_interference_size == 0,
+        sizeof(MPMCQueue) % detail::hardware_destructive_interference_size == 0,
         "Queue size must be a multiple of cache line size to "
         "prevent false sharing between adjacent queues");
     static_assert(
         offsetof(MPMCQueue, tail_) - offsetof(MPMCQueue, head_) ==
-            static_cast<std::ptrdiff_t>(hardware_destructive_interference_size),
+            static_cast<std::ptrdiff_t>(detail::hardware_destructive_interference_size),
         "head and tail must be a cache line apart to prevent false sharing");
   }
 
@@ -209,7 +211,7 @@ class MPMCQueue {
     requires std::is_nothrow_constructible_v<T, Args&&...>
   void emplace(Args&&... args) noexcept {
     const auto head = head_.fetch_add(1, std::memory_order_acq_rel);
-    Slot<T>& slot = slots_[index(head)];
+    detail::Slot<T>& slot = slots_[index(head)];
     slot.write(
         writeTurn(head), false, std::forward<Args>(args)...);
   }
@@ -220,7 +222,7 @@ class MPMCQueue {
   bool tryEmplace(Args&&... args) noexcept {
     auto head = head_.load(std::memory_order_acquire);
     while (true) {
-      Slot<T>& slot = slots_[index(head)];
+      detail::Slot<T>& slot = slots_[index(head)];
       if (slot.writable(writeTurn(head))) {
         if (head_.compare_exchange_strong(
                 head, head + 1, std::memory_order_acq_rel)) {
@@ -255,14 +257,14 @@ class MPMCQueue {
 
   void pop(T& elem) noexcept {
     const auto tail = tail_.fetch_add(1, std::memory_order_acq_rel);
-    Slot<T>& slot = slots_[index(tail)];
+    detail::Slot<T>& slot = slots_[index(tail)];
     slot.read(readTurn(tail), false, elem);
   }
 
   std::optional<T> tryPop() noexcept {
     auto tail = tail_.load(std::memory_order_acquire);
     while (true) {
-      Slot<T>& slot = slots_[index(tail)];
+      detail::Slot<T>& slot = slots_[index(tail)];
       if (slot.readable(readTurn(tail))) {
         if (tail_.compare_exchange_strong(
                 tail, tail + 1, std::memory_order_acq_rel)) {
@@ -317,7 +319,7 @@ class MPMCQueue {
   std::size_t index(std::size_t i) const noexcept { return i % capacity_; }
 
   std::size_t capacity_;
-  Slot<T>* slots_;
+  detail::Slot<T>* slots_;
 #if defined(__has_cpp_attribute) && __has_cpp_attribute(no_unique_address)
   Allocator allocator_ [[no_unique_address]];
 #else
@@ -326,7 +328,7 @@ class MPMCQueue {
 
   // Align to avoid false sharing between head_ and tail_
   alignas(
-      hardware_destructive_interference_size) std::atomic<std::size_t> head_;
+      detail::hardware_destructive_interference_size) std::atomic<std::size_t> head_;
   alignas(
-      hardware_destructive_interference_size) std::atomic<std::size_t> tail_;
+      detail::hardware_destructive_interference_size) std::atomic<std::size_t> tail_;
 };

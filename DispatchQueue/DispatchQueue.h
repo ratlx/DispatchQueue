@@ -18,17 +18,20 @@ struct DispatchAttribute {
   static constexpr uint8_t initiallyInactive = 1 << 2;
 };
 
-class DispatchQueueExecutor;
 class DispatchWorkItem;
 class DispatchGroup;
-class DispatchTask;
 
+namespace detail {
+class DispatchTask;
+class DispatchQueueExecutor;
 struct DispatchQueueAddResult {
   DispatchQueueAddResult(bool add) : notifiable(add) {}
   bool notifiable;
 };
+}
+// namespace detail
 
-class DispatchQueue : public DispatchKeepAlive {
+class DispatchQueue : public detail::DispatchKeepAlive {
  public:
   virtual ~DispatchQueue() noexcept = default;
 
@@ -61,7 +64,7 @@ class DispatchQueue : public DispatchKeepAlive {
     }
   }
 
-  virtual std::optional<DispatchTask> tryTake() = 0;
+  virtual std::optional<detail::DispatchTask> tryTake() = 0;
   virtual bool suspendCheck() = 0;
 
   std::string label_;
@@ -71,7 +74,7 @@ class DispatchQueue : public DispatchKeepAlive {
   std::atomic<ssize_t> suspendCount_{0};
 
  private:
-  friend class DispatchQueueExecutor;
+  friend class detail::DispatchQueueExecutor;
 
   uint8_t attribute_{0};
 };

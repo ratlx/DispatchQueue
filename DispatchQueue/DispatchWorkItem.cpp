@@ -12,6 +12,8 @@
 #include "DispatchWorkItem.h"
 #include "Utility.h"
 
+using namespace detail;
+
 DispatchNotify::DispatchNotify(DispatchWorkItem& work, DispatchQueue* ptr)
     : next_(DispatchKeepAlive::getKeepAliveToken(&work)),
       queueKA_(DispatchKeepAlive::getKeepAliveToken(ptr)),

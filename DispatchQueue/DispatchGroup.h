@@ -12,7 +12,7 @@
 #include "DispatchWorkItem.h"
 #include "Utility.h"
 
-class DispatchGroup : public DispatchKeepAlive {
+class DispatchGroup : public detail::DispatchKeepAlive {
  public:
   DispatchGroup() noexcept = default;
 
@@ -45,10 +45,12 @@ class DispatchGroup : public DispatchKeepAlive {
     return false;
   }
 
-  // A call to this function must be balanced with a call to leave(), otherwise cause UB
+  // A call to this function must be balanced with a call to leave(), otherwise
+  // cause UB
   void enter() noexcept { taskCount_.fetch_add(1, std::memory_order_acq_rel); }
 
-  // A call to this function must be balanced with a call to enter(), otherwise cause UB
+  // A call to this function must be balanced with a call to enter(), otherwise
+  // cause UB
   void leave() noexcept {
     auto mayNotify = waitCount_.load(std::memory_order_acquire);
     if (taskCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
@@ -75,5 +77,5 @@ class DispatchGroup : public DispatchKeepAlive {
   std::atomic<uint32_t> waitCount_{0};
   std::atomic<uint32_t> notifyCount_{0};
 
-  DispatchNotify nextWork_{};
+  detail::DispatchNotify nextWork_{};
 };

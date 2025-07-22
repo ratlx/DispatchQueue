@@ -38,18 +38,18 @@ class DispatchSerialQueue : public DispatchQueue {
 
  protected:
   template <typename... Args>
-  DispatchQueueAddResult add(Args&&... args);
+  detail::DispatchQueueAddResult add(Args&&... args);
 
-  std::optional<DispatchTask> tryTake() override;
+  std::optional<detail::DispatchTask> tryTake() override;
   bool suspendCheck() override;
 
  private:
   void notifyNextWork();
 
-  std::queue<DispatchTask> taskQueue_;
+  std::queue<detail::DispatchTask> taskQueue_;
   std::mutex taskQueueLock_;
 
-  DispatchKeepAlive::KeepAlive<DispatchQueueExecutor> executor_{};
+  DispatchKeepAlive::KeepAlive<detail::DispatchQueueExecutor> executor_{};
 
   std::atomic<bool> threadAttach_{false};
 };

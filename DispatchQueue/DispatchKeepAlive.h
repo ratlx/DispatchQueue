@@ -10,12 +10,13 @@
 #include <stdexcept>
 #include <utility>
 
+namespace detail {
 class DispatchKeepAlive {
- public:
+public:
   // not support for dummy or alias
   template <typename T = DispatchKeepAlive>
   class KeepAlive {
-   public:
+  public:
     KeepAlive() noexcept = default;
 
     KeepAlive(const KeepAlive& other)
@@ -72,7 +73,7 @@ class DispatchKeepAlive {
     T* operator->() noexcept { return ptr_; }
     T* get() noexcept { return ptr_; }
 
-   private:
+  private:
     friend class DispatchKeepAlive;
 
     explicit KeepAlive(T* ptr) noexcept : ptr_(ptr) {}
@@ -91,7 +92,7 @@ class DispatchKeepAlive {
     return KeepAlive<QT>(ptr);
   }
 
- protected:
+protected:
   void keepAliveAcquire() {
     if (keepAliveCount_.fetch_add(1, std::memory_order_acq_rel) == 0) {
       throw std::runtime_error("never increment from 0");
@@ -113,10 +114,12 @@ class DispatchKeepAlive {
     return false;
   }
 
- private:
+private:
   KeepAlive<> keepAlive_{this};
 
   std::atomic<std::size_t> keepAliveCount_{1};
   std::binary_semaphore keepAliveRelease_{0};
   bool keepAliveJoined_{false};
 };
+}
+// namespace detail

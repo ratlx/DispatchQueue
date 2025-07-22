@@ -15,7 +15,7 @@ DispatchConcurrentQueue::DispatchConcurrentQueue(
                    : DispatchAttribute::concurrent |
                   DispatchAttribute::initiallyInactive),
     taskQueue_(100){
-  executor_ = DispatchQueueExecutor::getGlobalExecutor();
+  executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
   id_ = executor_->registerDispatchQueue(this);
 }
 
@@ -25,7 +25,7 @@ DispatchConcurrentQueue::~DispatchConcurrentQueue() {
 }
 
 void DispatchConcurrentQueue::sync(Func<void> func) {
-  auto task = DispatchTask(this, std::move(func), false);
+  auto task = detail::DispatchTask(this, std::move(func), false);
   isInactive_.wait(true);
   isSuspend_.wait(true);
   // notify itself
@@ -99,7 +99,7 @@ void DispatchConcurrentQueue::resume() {
 }
 
 template <typename... Args>
-DispatchQueueAddResult DispatchConcurrentQueue::add(Args&&... args) {
+detail::DispatchQueueAddResult DispatchConcurrentQueue::add(Args&&... args) {
   bool notifiable = true;
   {
     std::shared_lock l{taskLock_};
@@ -112,7 +112,7 @@ DispatchQueueAddResult DispatchConcurrentQueue::add(Args&&... args) {
   return notifiable;
 }
 
-std::optional<DispatchTask> DispatchConcurrentQueue::tryTake() {
+std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
   if (suspendCheck()) {
     return std::nullopt;
   }

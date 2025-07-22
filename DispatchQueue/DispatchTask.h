@@ -15,14 +15,15 @@
 #include "DispatchWorkItem.h"
 #include "Utility.h"
 
+namespace detail {
 class DispatchTask {
- public:
+public:
   using TaskVariant =
       std::variant<Func<void>, DispatchKeepAlive::KeepAlive<DispatchWorkItem>>;
   using WaitSem = std::shared_ptr<std::binary_semaphore>;
 
   class AsyncTask {
-   public:
+  public:
     AsyncTask() = default;
     explicit AsyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
 
@@ -67,13 +68,13 @@ class DispatchTask {
       }
     }
 
-   private:
+  private:
     TaskVariant task_{Func<void>(nullptr)};
     DispatchKeepAlive::KeepAlive<DispatchGroup> groupKA_{};
   };
 
   class SyncTask {
-   public:
+  public:
     SyncTask() noexcept = default;
 
     explicit SyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
@@ -115,7 +116,7 @@ class DispatchTask {
       }
     }
 
-   private:
+  private:
     friend class DispatchTask;
 
     TaskVariant task_{Func<void>(nullptr)};
@@ -192,9 +193,11 @@ class DispatchTask {
     return std::get<1>(task_).wait_;
   }
 
- private:
+private:
   friend class DispatchQueueExecutor;
 
   std::variant<AsyncTask, SyncTask> task_{AsyncTask()};
   DispatchQueue* queue_{};
 };
+}
+// namespace detail

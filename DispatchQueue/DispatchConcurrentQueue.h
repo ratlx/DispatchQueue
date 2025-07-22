@@ -36,16 +36,16 @@ class DispatchConcurrentQueue : public DispatchQueue {
 
  protected:
   template <typename... Args>
-  DispatchQueueAddResult add(Args&&... args);
+  detail::DispatchQueueAddResult add(Args&&... args);
 
-  std::optional<DispatchTask> tryTake() override;
+  std::optional<detail::DispatchTask> tryTake() override;
   bool suspendCheck() override;
 
  private:
-  MPMCQueue<DispatchTask> taskQueue_;
+  MPMCQueue<detail::DispatchTask> taskQueue_;
   std::shared_mutex taskLock_;
   std::atomic<size_t> taskToAdd_;
   std::atomic<bool> isSuspend_{false};
 
-  DispatchKeepAlive::KeepAlive<DispatchQueueExecutor> executor_{};
+  DispatchKeepAlive::KeepAlive<detail::DispatchQueueExecutor> executor_{};
 };

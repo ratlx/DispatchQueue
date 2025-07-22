@@ -13,6 +13,7 @@
 #include "DispatchQueue.h"
 #include "Utility.h"
 
+namespace detail {
 struct DispatchWorkState {
   DispatchWorkState() noexcept = default;
 
@@ -54,7 +55,7 @@ struct DispatchWorkState {
 };
 
 class DispatchNotify {
- public:
+public:
   enum class NotifyState { none, notifying, func, workItem };
 
   DispatchNotify() noexcept = default;
@@ -115,21 +116,23 @@ class DispatchNotify {
 
   void doNotify();
 
- private:
+private:
   void checkAndSetNotify() {
     auto e = NotifyState::none;
     if (!notified_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
       throw std::runtime_error("can't notify twice");
-    }
+            }
   }
 
   std::variant<Func<void>, DispatchKeepAlive::KeepAlive<>> next_{};
   DispatchKeepAlive::KeepAlive<> queueKA_{};
   std::atomic<NotifyState> notified_{NotifyState::none};
 };
+}
+// namespace detail
 
-class DispatchWorkItem : public DispatchKeepAlive {
+class DispatchWorkItem : public detail::DispatchKeepAlive {
  public:
   explicit DispatchWorkItem(Func<void> func) noexcept
       : func_(std::move(func)) {}
@@ -202,6 +205,6 @@ class DispatchWorkItem : public DispatchKeepAlive {
   void checkAndSetCount();
 
   Func<void> func_{};
-  DispatchNotify nextWork_{};
-  DispatchWorkState state_{};
+  detail::DispatchNotify nextWork_{};
+  detail::DispatchWorkState state_{};
 };

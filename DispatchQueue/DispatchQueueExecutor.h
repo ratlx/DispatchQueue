@@ -20,8 +20,9 @@
 #include "TaskQueue/PrioritySemMPMCQueue.h"
 #include "Utility.h"
 
-class DispatchQueueExecutor : public DispatchKeepAlive {
- public:
+namespace detail {
+class DispatchQueueExecutor : public detail::DispatchKeepAlive {
+public:
   struct Thread {
     explicit Thread() : id(nextId.fetch_add(1)), handle() {}
 
@@ -63,7 +64,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   void deregisterDispatchQueue(DispatchQueue*);
   DispatchKeepAlive::KeepAlive<DispatchQueue> getQueueToken(size_t id);
 
- private:
+private:
   void ensureJoined();
   void addThreads(size_t n);
   void joinStoppedThreads(size_t n);
@@ -72,10 +73,10 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   void stopThreads(size_t n);
   void stopAndJoinAllThreads(bool isJoin);
 
-  std::optional<DispatchTask> takeNextTask(size_t& queueId);
+  std::optional<detail::DispatchTask> takeNextTask(size_t& queueId);
   bool tryDecrToStop();
   bool tryThreadTimeout();
-  bool threadShouldStop(const std::optional<DispatchTask>&);
+  bool threadShouldStop(const std::optional<detail::DispatchTask>&);
   void threadRun(ThreadPtr thread);
 
   bool minActive() const noexcept;
@@ -88,7 +89,7 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
   std::shared_mutex dispatchQueueLock_;
   // an empty keepAlive occupies index 0
   DispatchQueueList dispatchQueueList_{
-      DispatchKeepAlive::KeepAlive<DispatchQueue>()};
+    DispatchKeepAlive::KeepAlive<DispatchQueue>()};
 
   // These are only modified while holding threadListLock_, but
   // are read without holding the lock.
@@ -104,3 +105,4 @@ class DispatchQueueExecutor : public DispatchKeepAlive {
 
   bool isJoin_{false};
 };
+}

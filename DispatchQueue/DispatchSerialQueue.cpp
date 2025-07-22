@@ -16,7 +16,7 @@ DispatchSerialQueue::DispatchSerialQueue(
           isActive ? DispatchAttribute::serial
                    : DispatchAttribute::serial |
                   DispatchAttribute::initiallyInactive) {
-  executor_ = DispatchQueueExecutor::getGlobalExecutor();
+  executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
   id_ = executor_->registerDispatchQueue(this);
 }
 
@@ -26,7 +26,7 @@ DispatchSerialQueue::~DispatchSerialQueue() {
 }
 
 void DispatchSerialQueue::sync(Func<void> func) noexcept {
-  auto task = DispatchTask(this, std::move(func), false);
+  auto task = detail::DispatchTask(this, std::move(func), false);
   auto res = add(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
@@ -36,7 +36,7 @@ void DispatchSerialQueue::sync(Func<void> func) noexcept {
 }
 
 void DispatchSerialQueue::sync(DispatchWorkItem& workItem) noexcept {
-  auto task = DispatchTask(this, workItem, false);
+  auto task = detail::DispatchTask(this, workItem, false);
   auto res = add(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
@@ -93,7 +93,7 @@ void DispatchSerialQueue::resume() {
 }
 
 template <typename... Args>
-DispatchQueueAddResult DispatchSerialQueue::add(Args&&... args) {
+detail::DispatchQueueAddResult DispatchSerialQueue::add(Args&&... args) {
   std::lock_guard lock{taskQueueLock_};
   taskQueue_.emplace(this, std::forward<Args>(args)...);
 
@@ -105,7 +105,7 @@ DispatchQueueAddResult DispatchSerialQueue::add(Args&&... args) {
   return !e;
 }
 
-std::optional<DispatchTask> DispatchSerialQueue::tryTake() {
+std::optional<detail::DispatchTask> DispatchSerialQueue::tryTake() {
   if (suspendCheck()) {
     return std::nullopt;
   }
