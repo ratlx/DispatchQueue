@@ -2,6 +2,9 @@
 // Created by 小火锅 on 25-7-16.
 //
 
+#include <future>
+#include <memory>
+
 #include "DispatchConcurrentQueue.h"
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
@@ -14,7 +17,7 @@ DispatchConcurrentQueue::DispatchConcurrentQueue(
           isActive ? DispatchAttribute::concurrent
                    : DispatchAttribute::concurrent |
                   DispatchAttribute::initiallyInactive),
-    taskQueue_(100){
+      taskQueue_(1024) {
   executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
   id_ = executor_->registerDispatchQueue(this);
 }
@@ -24,13 +27,10 @@ DispatchConcurrentQueue::~DispatchConcurrentQueue() {
   joinKeepAliveOnce();
 }
 
-void DispatchConcurrentQueue::sync(Func<void> func) {
-  auto task = detail::DispatchTask(this, std::move(func), false);
+void DispatchConcurrentQueue::sync(Func<void> func) noexcept {
   isInactive_.wait(true);
   isSuspend_.wait(true);
-  // notify itself
-  task.notifySync();
-  task.perform();
+  detail::DispatchTask::makeFunc(this, std::move(func))();
 }
 
 void DispatchConcurrentQueue::sync(DispatchWorkItem& workItem) {
@@ -67,7 +67,8 @@ void DispatchConcurrentQueue::activate() {
     std::unique_lock l{taskLock_};
     bool e = true;
     if (isInactive_.compare_exchange_strong(
-            e, false, std::memory_order_relaxed) && !isSuspend_.load(std::memory_order_relaxed)) {
+            e, false, std::memory_order_relaxed) &&
+        !isSuspend_.load(std::memory_order_relaxed)) {
       // wake up all the sync task.
       isInactive_.notify_all();
       n = taskToAdd_.exchange(0, std::memory_order_relaxed);
@@ -96,20 +97,6 @@ void DispatchConcurrentQueue::resume() {
   for (int i = 0; i < n; ++i) {
     executor_->addWithPriority(id_, priority_);
   }
-}
-
-template <typename... Args>
-detail::DispatchQueueAddResult DispatchConcurrentQueue::add(Args&&... args) {
-  bool notifiable = true;
-  {
-    std::shared_lock l{taskLock_};
-    if (isInactive_.load(std::memory_order_relaxed) || isSuspend_.load(std::memory_order_relaxed)) {
-      taskToAdd_.fetch_add(1, std::memory_order_relaxed);
-      notifiable = false;
-    }
-  }
-  taskQueue_.emplace(this, std::forward<Args>(args)...);
-  return notifiable;
 }
 
 std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {

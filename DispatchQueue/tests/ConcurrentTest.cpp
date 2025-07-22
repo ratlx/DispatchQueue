@@ -132,6 +132,21 @@ TEST(ConcurrentTest, Suspend) {
   EXPECT_EQ(cnt, n);
 }
 
+TEST(ConcurrentTest, Return) {
+  auto cq = DispatchConcurrentQueue("cq", 0, true);
+  EXPECT_EQ(cq.sync<int>([] {
+    this_thread::sleep_for(chrono::milliseconds(10));
+    return 0;
+  }).value(), 0);
+
+  auto ft = cq.async<string>([] {
+    this_thread::sleep_for(chrono::milliseconds(10));
+    return "Who are you on the bed?";
+  });
+  ft.wait();
+  EXPECT_EQ(ft.get(), "Who are you on the bed?");
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

@@ -64,7 +64,7 @@ public:
   void deregisterDispatchQueue(DispatchQueue*);
   DispatchKeepAlive::KeepAlive<DispatchQueue> getQueueToken(size_t id);
 
-private:
+ private:
   void ensureJoined();
   void addThreads(size_t n);
   void joinStoppedThreads(size_t n);
@@ -89,7 +89,7 @@ private:
   std::shared_mutex dispatchQueueLock_;
   // an empty keepAlive occupies index 0
   DispatchQueueList dispatchQueueList_{
-    DispatchKeepAlive::KeepAlive<DispatchQueue>()};
+      DispatchKeepAlive::KeepAlive<DispatchQueue>()};
 
   // These are only modified while holding threadListLock_, but
   // are read without holding the lock.
@@ -105,4 +105,4 @@ private:
 
   bool isJoin_{false};
 };
-}
+} // namespace detail

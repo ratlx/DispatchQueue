@@ -4,8 +4,10 @@
 
 #pragma once
 
+#include <future>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <semaphore>
 #include <variant>
 
@@ -17,13 +19,13 @@
 
 namespace detail {
 class DispatchTask {
-public:
+ public:
   using TaskVariant =
       std::variant<Func<void>, DispatchKeepAlive::KeepAlive<DispatchWorkItem>>;
   using WaitSem = std::shared_ptr<std::binary_semaphore>;
 
   class AsyncTask {
-  public:
+   public:
     AsyncTask() = default;
     explicit AsyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
 
@@ -53,13 +55,7 @@ public:
 
     void perform() noexcept {
       if (task_.index() == 0) {
-        try {
-          std::get<0>(task_)();
-        } catch (const std::exception& ex) {
-          std::cerr << "Task exception: " << ex.what() << std::endl;
-        } catch (...) {
-          std::cerr << "Task exception: unknown error" << std::endl;
-        }
+        std::get<0>(task_)();
         if (groupKA_) {
           groupKA_->leave();
         }
@@ -68,13 +64,13 @@ public:
       }
     }
 
-  private:
+   private:
     TaskVariant task_{Func<void>(nullptr)};
     DispatchKeepAlive::KeepAlive<DispatchGroup> groupKA_{};
   };
 
   class SyncTask {
-  public:
+   public:
     SyncTask() noexcept = default;
 
     explicit SyncTask(Func<void> f) noexcept : task_(std::move(f)) {}
@@ -104,19 +100,13 @@ public:
         wait_->acquire();
       }
       if (task_.index() == 0) {
-        try {
-          std::get<0>(task_)();
-        } catch (const std::exception& ex) {
-          std::cerr << "Task exception: " << ex.what() << std::endl;
-        } catch (...) {
-          std::cerr << "Task exception: unknown error" << std::endl;
-        }
+        std::get<0>(task_)();
       } else {
         std::get<1>(task_)->perform();
       }
     }
 
-  private:
+   private:
     friend class DispatchTask;
 
     TaskVariant task_{Func<void>(nullptr)};
@@ -127,14 +117,14 @@ public:
   DispatchTask() = default;
 
   DispatchTask(DispatchQueue* q, Func<void> f, DispatchGroup* g) noexcept
-      : task_(AsyncTask(std::move(f), g)), queue_(q) {}
+      : task_(AsyncTask(makeFunc(q, std::move(f)), g)), queue_(q) {}
 
   DispatchTask(DispatchQueue* q, Func<void> f, bool isAsync) noexcept
       : queue_(q) {
     if (isAsync) {
-      task_ = AsyncTask(std::move(f));
+      task_ = AsyncTask(makeFunc(q, std::move(f)));
     } else {
-      task_ = SyncTask(std::move(f));
+      task_ = SyncTask(makeFunc(q, std::move(f)));
     }
   }
 
@@ -147,9 +137,15 @@ public:
     }
   }
 
+  template <typename R>
+  DispatchTask(
+      DispatchQueue* q, Func<R> f, std::shared_ptr<std::promise<R>> p) noexcept
+      : task_(AsyncTask(makeAsyncRetFunc(q, std::move(f), std::move(p)))),
+        queue_(q) {}
+
   DispatchTask(
       DispatchQueue* q, std::shared_ptr<std::binary_semaphore> wait) noexcept
-      : queue_(q), task_(SyncTask(std::move(wait))) {}
+      : task_(SyncTask(std::move(wait))), queue_(q) {}
 
   DispatchTask(const DispatchTask& other) noexcept = default;
 
@@ -171,7 +167,7 @@ public:
 
   bool isPoison() const noexcept { return !queue_; }
 
-  void perform() {
+  void perform() noexcept {
     std::visit([](auto&& task) { task.perform(); }, task_);
   }
 
@@ -193,11 +189,69 @@ public:
     return std::get<1>(task_).wait_;
   }
 
-private:
+  template <typename R>
+    requires(!std::is_void_v<R>)
+  static Func<std::optional<R>> makeSyncRetFunc(
+      DispatchQueue* q, Func<R> func) noexcept {
+    return
+        [label = q->getLabel(), func = std::move(func)]() -> std::optional<R> {
+          try {
+            return func();
+          } catch (const std::exception& ex) {
+            std::cerr << "Task exception in " << label << ": " << ex.what()
+                      << std::endl;
+          } catch (...) {
+            std::cerr << "Task exception in " << label << ": "
+                      << "unknown error" << std::endl;
+          }
+          return std::nullopt;
+        };
+  }
+
+  static Func<void> makeFunc(DispatchQueue* q, Func<void> func) noexcept {
+    return [label = q->getLabel(), func = std::move(func)] {
+      try {
+        func();
+      } catch (const std::exception& ex) {
+        std::cerr << "Task exception in " << label << ": " << ex.what()
+                  << std::endl;
+      } catch (...) {
+        std::cerr << "Task exception in " << label << ": " << "unknown error"
+                  << std::endl;
+      }
+    };
+  }
+
+  template <typename R>
+    requires(!std::is_void_v<R>)
+  Func<void> makeAsyncRetFunc(
+      DispatchQueue* q,
+      Func<R> func,
+      std::shared_ptr<std::promise<R>> promise) noexcept {
+    return [qLabel = q->getLabel(),
+            func = std::move(func),
+            promise = std::move(promise)] {
+      try {
+        promise->set_value(func());
+      } catch (...) {
+        try {
+          promise->set_exception(std::current_exception());
+        } catch (const std::exception& ex) {
+          std::cerr << "Task exception in " << qLabel << ": " << ex.what()
+                    << std::endl;
+        } catch (...) {
+          std::cerr << "Task exception in " << qLabel << ": "
+                    << "unknown error" << std::endl;
+        }
+      }
+    };
+  }
+
+ private:
   friend class DispatchQueueExecutor;
 
   std::variant<AsyncTask, SyncTask> task_{AsyncTask()};
   DispatchQueue* queue_{};
 };
-}
+} // namespace detail
 // namespace detail

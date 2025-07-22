@@ -34,6 +34,13 @@ TEST(SerialQueue, Sync) {
     EXPECT_EQ(cnt, 2);
   });
   sq.sync(w);
+  EXPECT_EQ(sq.sync<double>([] {
+    return 20;
+  }).value(), 20);
+  EXPECT_EQ(sq.sync<double>([] {
+    throw std::runtime_error("return nullopt");
+    return 20;
+  }), std::nullopt);
 }
 
 TEST(SerialQueue, Async) {
@@ -48,9 +55,17 @@ TEST(SerialQueue, Async) {
       }
     }, g);
   }
+  auto ft1 = sq.async<bool>([&] {
+    throw runtime_error("test throw");
+    return cnt == n * m;
+  });
+  EXPECT_THROW(ft1.get(), std::runtime_error);
   g.wait();
 
-  EXPECT_EQ(cnt, n * m);
+  auto ft2 = sq.async<bool>([&] {
+    return cnt == n * m;
+  });
+  EXPECT_TRUE(ft2.get());
 }
 
 TEST(SerialQueue, Combine) {
@@ -59,10 +74,11 @@ TEST(SerialQueue, Combine) {
   cnt = 0;
   for (int i = 0; i < n; ++i) {
     if (i & 1) {
-      sq.sync([=] {
+      EXPECT_EQ(sq.sync<int>([=] {
         EXPECT_EQ(cnt, i);
         cnt++;
-      });
+        return i;
+      }).value(), i);
     } else {
       sq.async([=] {
         EXPECT_EQ(cnt, i);
