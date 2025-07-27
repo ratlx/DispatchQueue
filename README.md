@@ -69,6 +69,6 @@ All types of DispatchQueues (both serial and concurrent) are scheduled by a unif
 
 - [ ] Replace the underlying bounded queue with an unbounded MPMC queue.
 - [ ] Conduct performance testing for DispatchQueue.
-- [ ] Support tasks with return values and a notify callback mechanism.
+- [x] Support tasks with return values and a notify callback mechanism.
 - [ ] Support the `Barrier` flag for `DispatchWorkItem`.
 
