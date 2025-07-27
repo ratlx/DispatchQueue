@@ -25,12 +25,12 @@ class DispatchSerialQueue : public DispatchQueue {
 
   ~DispatchSerialQueue() override;
 
-  void sync(Func<void> func) noexcept override;
+  void sync(Func<void> func) override;
   void sync(DispatchWorkItem& workItem) override;
   // return nullopt if func fail.
   template <typename R>
     requires std::is_nothrow_move_constructible_v<R>
-  std::optional<R> sync(Func<R> func) noexcept {
+  std::optional<R> sync(Func<R> func) {
     auto waitSem = std::make_shared<std::binary_semaphore>(0);
     auto res = add(waitSem);
     if (res.notifiable) {

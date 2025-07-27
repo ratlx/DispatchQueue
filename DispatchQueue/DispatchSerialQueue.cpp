@@ -25,7 +25,7 @@ DispatchSerialQueue::~DispatchSerialQueue() {
   joinKeepAliveOnce();
 }
 
-void DispatchSerialQueue::sync(Func<void> func) noexcept {
+void DispatchSerialQueue::sync(Func<void> func) {
   auto task = detail::DispatchTask(this, std::move(func), false);
   auto res = add(task.getWaitSem());
   if (res.notifiable) {
