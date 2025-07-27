@@ -28,7 +28,7 @@ struct DispatchQueueAddResult {
   DispatchQueueAddResult(bool add) : notifiable(add) {}
   bool notifiable;
 };
-}
+} // namespace detail
 // namespace detail
 
 class DispatchQueue : public detail::DispatchKeepAlive {

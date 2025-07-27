@@ -22,7 +22,7 @@
 
 namespace detail {
 class DispatchQueueExecutor : public detail::DispatchKeepAlive {
-public:
+ public:
   struct Thread {
     explicit Thread() : id(nextId.fetch_add(1)), handle() {}
 

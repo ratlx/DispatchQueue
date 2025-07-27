@@ -41,7 +41,7 @@ detail::DispatchQueueExecutor::getGlobalExecutor() {
   static std::once_flag once;
 
   std::call_once(once, [] {
-    globalExecutor.emplace(std::thread::hardware_concurrency(), 3, 100);
+    globalExecutor.emplace(std::thread::hardware_concurrency(), 3, 1024);
   });
 
   return DispatchKeepAlive::getKeepAliveToken(&*globalExecutor);
@@ -52,7 +52,8 @@ void detail::DispatchQueueExecutor::stop() {
   stopAndJoinAllThreads(false);
 }
 
-void detail::DispatchQueueExecutor::addWithPriority(size_t queueId, int8_t priority) {
+void detail::DispatchQueueExecutor::addWithPriority(
+    size_t queueId, int8_t priority) {
   // It's not safe to expect that the executor is alive after a task is added to
   // the queueId (this task could be holding the last KeepAlive and when
   // finished
@@ -62,8 +63,9 @@ void detail::DispatchQueueExecutor::addWithPriority(size_t queueId, int8_t prior
   bool mayNeedToAddThreads = minThreads_.load(std::memory_order_relaxed) == 0 ||
       activeThreads_.load(std::memory_order_relaxed) <
           maxThreads_.load(std::memory_order_relaxed);
-  auto ka =
-      mayNeedToAddThreads ? getKeepAliveToken(this) : DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>();
+  auto ka = mayNeedToAddThreads
+      ? getKeepAliveToken(this)
+      : DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>();
 
   auto result = queueIdQueue_.addWithPriority(queueId, priority);
 
