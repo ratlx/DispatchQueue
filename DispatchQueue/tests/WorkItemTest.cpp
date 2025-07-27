@@ -13,14 +13,24 @@
 
 using namespace std;
 
+atomic<bool> testSet = false;
+int testFunc() {
+  testSet = true;
+  return 40;
+}
+
 TEST(WorkItemTest, Perform) {
   atomic<bool> e = false;
-  auto w = DispatchWorkItem([&] {
+  testSet = false;
+  DispatchWorkItem w1([&] {
     e = true;
   });
   EXPECT_FALSE(e);
-  w.perform();
+  w1.perform();
   EXPECT_TRUE(e);
+  auto w2 = DispatchWorkItem(Func<int>(testFunc));
+  w2.perform();
+  EXPECT_TRUE(testSet);
 }
 
 TEST(WorkItemTest, Wait) {
@@ -29,13 +39,13 @@ TEST(WorkItemTest, Wait) {
     cnt.fetch_add(1);
   };
   // sync
-  auto w1 = DispatchWorkItem(add);
+  DispatchWorkItem w1(add);
   auto sq = DispatchSerialQueue("sq");
   sq.sync(w1);
   w1.wait();
 
   // async
-  auto w2 = DispatchWorkItem(add);
+  DispatchWorkItem w2(add);
   sq.async(w2);
   w2.wait();
 
@@ -44,21 +54,55 @@ TEST(WorkItemTest, Wait) {
 
 TEST(WorkItemTest, Notify) {
   atomic<int> cnt = 0;
-  auto w1 = DispatchWorkItem([&] {
+  binary_semaphore sem{0};
+  DispatchWorkItem w1([&] {
     cnt.fetch_add(1);
     EXPECT_LE(cnt, 2);
   });
 
   auto cur = this_thread::get_id();
   auto sq = DispatchSerialQueue("sq");
+  Callback<int> callback = [&](int res) {
+    EXPECT_EQ(res, 40);
+    sem.release();
+  };
+  EXPECT_THROW(w1.notify(sq, callback), std::invalid_argument);
   w1.notify(sq, [&] {
     EXPECT_NE(cur, this_thread::get_id());
     w1.perform();
+    sem.release();
   });
 
   // the notify does only once, won't be recursion
   w1.perform();
-  this_thread::sleep_for(chrono::milliseconds(10));
+  sem.acquire();
+
+  auto w2 = DispatchWorkItem(Func<int>(testFunc));
+  w2.notify(sq, callback);
+
+  w2.perform();
+  sem.acquire();
+}
+
+struct CopyOnlyType {
+  CopyOnlyType() = default;
+  CopyOnlyType(const CopyOnlyType&) noexcept = default;
+  CopyOnlyType(CopyOnlyType&&) noexcept = default;
+};
+
+TEST(WorkItemTest, MoveOnlyType) {
+  DispatchWorkItem w1([&] {
+    return CopyOnlyType{};
+  });
+  DispatchSerialQueue sq("s1");
+  binary_semaphore wait{0};
+  EXPECT_THROW(w1.notify(sq, []{}), std::invalid_argument);
+  EXPECT_NO_THROW(w1.notify<CopyOnlyType>(sq, [&](CopyOnlyType) {
+    wait.release();
+  }));
+
+  w1.perform();
+  wait.acquire();
 }
 
 int main(int argc, char** argv) {

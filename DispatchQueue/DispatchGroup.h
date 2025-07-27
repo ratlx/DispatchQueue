@@ -57,14 +57,14 @@ class DispatchGroup : public detail::DispatchKeepAlive {
       notifyCount_.store(mayNotify, std::memory_order_release);
       taskCount_.notify_all();
 
-      nextWork_.doNotify();
+      nextWork_.doNotify(detail::return_void_t{});
     }
   }
 
   void notify(DispatchQueue& q, Func<void> func) {
     nextWork_.notify(&q, std::move(func));
     if (taskCount_.load(std::memory_order_acquire) == 0) {
-      nextWork_.doNotify();
+      nextWork_.doNotify(detail::return_void_t{});
     }
   }
 
