@@ -40,14 +40,14 @@ void DispatchConcurrentQueue::sync(DispatchWorkItem& workItem) {
 }
 
 void DispatchConcurrentQueue::async(Func<void> func) {
-  auto res = add(std::move(func), true);
+  auto res = addTask(std::move(func), true);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }
 }
 
 void DispatchConcurrentQueue::async(DispatchWorkItem& work) {
-  auto res = add(work, true);
+  auto res = addTask(work, true);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }
@@ -55,7 +55,7 @@ void DispatchConcurrentQueue::async(DispatchWorkItem& work) {
 
 void DispatchConcurrentQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto res = add(std::move(func), &group);
+  auto res = addTask(std::move(func), &group);
   if (res.notifiable) {
     executor_->addWithPriority(id_, priority_);
   }

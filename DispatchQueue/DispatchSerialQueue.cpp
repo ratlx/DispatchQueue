@@ -27,7 +27,7 @@ DispatchSerialQueue::~DispatchSerialQueue() {
 
 void DispatchSerialQueue::sync(Func<void> func) {
   auto task = detail::DispatchTask(this, std::move(func), false);
-  auto res = add(task.getWaitSem());
+  auto res = addTask(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -37,7 +37,7 @@ void DispatchSerialQueue::sync(Func<void> func) {
 
 void DispatchSerialQueue::sync(DispatchWorkItem& workItem) {
   auto task = detail::DispatchTask(this, workItem, false);
-  auto res = add(task.getWaitSem());
+  auto res = addTask(task.getWaitSem());
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -46,14 +46,14 @@ void DispatchSerialQueue::sync(DispatchWorkItem& workItem) {
 }
 
 void DispatchSerialQueue::async(DispatchWorkItem& workItem) {
-  auto res = add(workItem, true);
+  auto res = addTask(workItem, true);
   if (res.notifiable) {
     notifyNextWork();
   }
 }
 
 void DispatchSerialQueue::async(Func<void> func) {
-  auto res = add(std::move(func), true);
+  auto res = addTask(std::move(func), true);
   if (res.notifiable) {
     notifyNextWork();
   }
@@ -61,7 +61,7 @@ void DispatchSerialQueue::async(Func<void> func) {
 
 void DispatchSerialQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto res = add(std::move(func), &group);
+  auto res = addTask(std::move(func), &group);
   if (res.notifiable) {
     notifyNextWork();
   }

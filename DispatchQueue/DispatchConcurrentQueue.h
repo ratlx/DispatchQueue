@@ -40,7 +40,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
   template <typename R>
   std::future<R> async(Func<R> func) noexcept {
     auto promise = std::make_shared<std::promise<R>>();
-    auto res = add(std::move(func), promise);
+    auto res = addTask(std::move(func), promise);
     if (res.notifiable) {
       executor_->addWithPriority(id_, priority_);
     }
@@ -53,7 +53,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
 
  protected:
   template <typename... Args>
-  detail::DispatchQueueAddResult add(Args&&... args) {
+  detail::DispatchQueueAddResult addTask(Args&&... args) {
     bool notifiable = true;
     {
       std::shared_lock l{taskLock_};

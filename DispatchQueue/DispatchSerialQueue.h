@@ -32,7 +32,7 @@ class DispatchSerialQueue : public DispatchQueue {
     requires std::is_nothrow_move_constructible_v<R>
   std::optional<R> sync(Func<R> func) {
     auto waitSem = std::make_shared<std::binary_semaphore>(0);
-    auto res = add(waitSem);
+    auto res = addTask(waitSem);
     if (res.notifiable) {
       notifyNextWork();
     }
@@ -49,7 +49,7 @@ class DispatchSerialQueue : public DispatchQueue {
   template <typename R>
   std::future<R> async(Func<R> func) noexcept {
     auto promise = std::make_shared<std::promise<R>>();
-    auto res = add(std::move(func), promise);
+    auto res = addTask(std::move(func), promise);
     if (res.notifiable) {
       notifyNextWork();
     }
@@ -62,7 +62,7 @@ class DispatchSerialQueue : public DispatchQueue {
 
  protected:
   template <typename... Args>
-  detail::DispatchQueueAddResult add(Args&&... args) {
+  detail::DispatchQueueAddResult addTask(Args&&... args) {
     std::lock_guard lock{taskQueueLock_};
     taskQueue_.emplace(this, std::forward<Args>(args)...);
 
