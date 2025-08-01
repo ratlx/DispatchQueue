@@ -35,7 +35,7 @@ void DispatchNotify::doNotify(std::any res) noexcept {
     auto workItemKA =
         std::move(std::get<DispatchKeepAlive::KeepAlive<>>(next_));
     static_cast<DispatchQueue*>(queueKA.get())
-        ->async(*reinterpret_cast<DispatchWorkItem*>(workItemKA.get()));
+        ->async(*static_cast<DispatchWorkItem*>(workItemKA.get()));
   } else {
     return;
   }

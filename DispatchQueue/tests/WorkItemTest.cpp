@@ -84,20 +84,20 @@ TEST(WorkItemTest, Notify) {
   sem.acquire();
 }
 
-struct CopyOnlyType {
-  CopyOnlyType() = default;
-  CopyOnlyType(const CopyOnlyType&) noexcept = default;
-  CopyOnlyType(CopyOnlyType&&) noexcept = default;
+struct MoveOnlyType {
+  MoveOnlyType() = default;
+  MoveOnlyType(const MoveOnlyType&) noexcept = default;
+  MoveOnlyType(MoveOnlyType&&) noexcept = default;
 };
 
 TEST(WorkItemTest, MoveOnlyType) {
   DispatchWorkItem w1([&] {
-    return CopyOnlyType{};
+    return MoveOnlyType{};
   });
   DispatchSerialQueue sq("s1");
   binary_semaphore wait{0};
   EXPECT_THROW(w1.notify(sq, []{}), std::invalid_argument);
-  EXPECT_NO_THROW(w1.notify<CopyOnlyType>(sq, [&](CopyOnlyType) {
+  EXPECT_NO_THROW(w1.notify<MoveOnlyType>(sq, [&](MoveOnlyType) {
     wait.release();
   }));
 

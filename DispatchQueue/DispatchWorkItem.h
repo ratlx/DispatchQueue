@@ -84,22 +84,6 @@ class DispatchNotify {
 
 class DispatchWorkItem : public detail::DispatchKeepAlive {
  public:
-  // explicit DispatchWorkItem(Func<void> func) noexcept
-  //     : returnType_(typeid(detail::return_void_t)) {
-  //   func_ = [func = std::move(func)]() -> std::any {
-  //     func();
-  //     return detail::return_void_t{};
-  //   };
-  // }
-  //
-  // template<typename T>
-  // requires (std::is_nothrow_move_constructible_v<T>)
-  // explicit DispatchWorkItem(Func<T> func) noexcept : returnType_(typeid(T)) {
-  //   func_ = [func = std::move(func)]() -> std::any {
-  //     return func();
-  //   };
-  // }
-
   template <typename F, typename R = std::invoke_result_t<F>>
     requires std::is_void_v<R>
   explicit DispatchWorkItem(F func) noexcept
@@ -110,10 +94,14 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
     };
   }
 
+  // Because when implementing the notify callback mechanism, I use any.
+  // 'Any' needs type R to support value copy and reference copy. Also, any can only
+  // be used to represent value types, and for simplicity, reference returns
+  // are prohibited here
   template <typename F, typename R = std::invoke_result_t<F>>
     requires(
         !std::is_void_v<R> && std::is_nothrow_copy_constructible_v<R> &&
-        std::is_nothrow_move_constructible_v<R>)
+        std::is_nothrow_move_constructible_v<R> && !std::is_reference_v<R>)
   explicit DispatchWorkItem(F func) noexcept : returnType_(typeid(R)) {
     func_ = [func = std::move(func)]() -> std::any { return func(); };
   }
@@ -151,6 +139,7 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
   }
 
   template <typename T>
+  requires (!std::is_reference_v<T>)
   void notify(DispatchQueue& q, Callback<T> callback) {
     if (returnType_ != typeid(T)) {
       throw std::invalid_argument("return type mismatch");

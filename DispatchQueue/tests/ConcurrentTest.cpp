@@ -132,6 +132,18 @@ TEST(ConcurrentTest, Suspend) {
   EXPECT_EQ(cnt, n);
 }
 
+struct NoCopyOrMoveType {
+  NoCopyOrMoveType() = default;
+  NoCopyOrMoveType(const NoCopyOrMoveType&) noexcept = delete;
+  NoCopyOrMoveType(NoCopyOrMoveType&&) noexcept = default;
+};
+
+struct MoveOnlyType {
+  MoveOnlyType() = default;
+  MoveOnlyType(const MoveOnlyType&) noexcept = delete;
+  MoveOnlyType(MoveOnlyType&&) noexcept = default;
+};
+
 TEST(ConcurrentTest, Return) {
   auto cq = DispatchConcurrentQueue("cq", 0, true);
   EXPECT_EQ(cq.sync<int>([] {
@@ -139,12 +151,21 @@ TEST(ConcurrentTest, Return) {
     return 0;
   }).value(), 0);
 
-  auto ft = cq.async<string>([] {
+  cq.sync<NoCopyOrMoveType>([] {
+    return NoCopyOrMoveType{};
+  });
+
+  auto ft1 = cq.async<string>([] {
     this_thread::sleep_for(chrono::milliseconds(10));
     return "Who are you on the bed?";
   });
-  ft.wait();
-  EXPECT_EQ(ft.get(), "Who are you on the bed?");
+  auto ft2 = cq.async<MoveOnlyType>([] {
+    return MoveOnlyType{};
+  });
+
+  ft2.get();
+  ft1.wait();
+  EXPECT_EQ(ft1.get(), "Who are you on the bed?");
 }
 
 int main(int argc, char** argv) {

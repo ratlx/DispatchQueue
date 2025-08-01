@@ -19,6 +19,12 @@ void add() {
   cnt.fetch_add(1);
 }
 
+struct MoveOnlyType {
+  MoveOnlyType() = default;
+  MoveOnlyType(const MoveOnlyType&) noexcept = delete;
+  MoveOnlyType(MoveOnlyType&&) noexcept = default;
+};
+
 TEST(SerialQueue, Sync) {
   auto sq = DispatchSerialQueue("sq");
   cnt = 0;
@@ -41,6 +47,9 @@ TEST(SerialQueue, Sync) {
     throw std::runtime_error("return nullopt");
     return 20;
   }), std::nullopt);
+  EXPECT_TRUE(sq.sync<MoveOnlyType>([] {
+    return MoveOnlyType{};
+  }).has_value());
 }
 
 TEST(SerialQueue, Async) {
@@ -66,6 +75,11 @@ TEST(SerialQueue, Async) {
     return cnt == n * m;
   });
   EXPECT_TRUE(ft2.get());
+
+  auto ft3 = sq.async<MoveOnlyType>([] {
+    return MoveOnlyType{};
+  });
+  ft3.get();
 }
 
 TEST(SerialQueue, Combine) {
