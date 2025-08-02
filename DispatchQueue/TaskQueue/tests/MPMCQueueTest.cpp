@@ -133,9 +133,9 @@ TEST(MPMCQueueTest, ZeroCapacityThrows) {
 }
 
 TEST(MPMCQueueTest, FuzzTest) {
-  const uint64_t numOps = 1000;
+  const uint64_t numOps = 100000;
   const uint64_t numThreads = 10;
-  MPMCQueue<uint64_t> q(numThreads);
+  MPMCQueue<uint64_t> q(numOps / numThreads);
   std::atomic<bool> flag(false);
   std::vector<std::thread> threads;
   std::atomic<uint64_t> sum(0);
