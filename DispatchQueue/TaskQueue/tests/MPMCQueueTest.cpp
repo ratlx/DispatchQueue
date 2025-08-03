@@ -6,10 +6,13 @@
 #include <memory>
 #include <set>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include <gtest/gtest.h>
 
 #include "../MPMCQueue.h"
+
+using namespace std;
 
 // TestType tracks correct usage of constructors and destructors
 struct TestType {
@@ -53,73 +56,88 @@ TEST(MPMCQueueTest, BasicTestType) {
   EXPECT_EQ(q.size(), 0);
   EXPECT_TRUE(q.empty());
   for (int i = 0; i < 10; i++) {
-    q.emplace();
+    q.blockingWrite();
   }
   EXPECT_EQ(q.size(), 10);
   EXPECT_FALSE(q.empty());
   EXPECT_EQ(TestType::constructed.size(), 10);
   TestType t;
-  q.pop(t);
+  q.blockingRead(t);
   EXPECT_EQ(q.size(), 9);
   EXPECT_FALSE(q.empty());
   EXPECT_EQ(TestType::constructed.size(), 10);
 
-  q.pop(t);
-  q.emplace();
+  q.blockingRead(t);
+  q.blockingWrite();
   EXPECT_EQ(q.size(), 9);
   EXPECT_FALSE(q.empty());
   EXPECT_EQ(TestType::constructed.size(), 10);
+}
+
+TEST(MPMCQueueTest, MoveConstructAssign) {
+  // Construct
+  MPMCQueue<int> q1(1);
+  q1.blockingWrite(1);
+  MPMCQueue<int> q2 = std::move(q1);
+  EXPECT_EQ(q1.capacity(), 0);
+  EXPECT_EQ(q2.capacity(), 1);
+  EXPECT_EQ(*q2.readIfNotEmpty(), 1);
+
+  // Assign
+  q2.blockingWrite(2);
+  q1 = std::move(q2);
+  EXPECT_EQ(q1.capacity(), 1);
+  EXPECT_EQ(q2.capacity(), 0);
+  EXPECT_EQ(*q1.readIfNotEmpty(), 2);
 }
 
 TEST(MPMCQueueTest, TestTypeDestruct) {
   {
     MPMCQueue<TestType> q(5);
     for (int i = 0; i < 5; ++i)
-      q.emplace();
+      q.blockingWrite();
   }
   EXPECT_EQ(TestType::constructed.size(), 0);
 }
 
 TEST(MPMCQueueTest, IntQueue) {
   MPMCQueue<int> q(1);
-  EXPECT_TRUE(q.tryPush(1));
+  EXPECT_TRUE(q.writeIfNotFull(1));
   EXPECT_EQ(q.sizeGuess(), 1);
   EXPECT_FALSE(q.empty());
-  EXPECT_FALSE(q.tryPush(2));
+  EXPECT_FALSE(q.writeIfNotFull(2));
   EXPECT_EQ(q.sizeGuess(), 1);
   EXPECT_FALSE(q.empty());
-  auto k = q.tryPop();
+  auto k = q.readIfNotEmpty();
   EXPECT_EQ(*k, 1);
   EXPECT_EQ(q.sizeGuess(), 0);
   EXPECT_TRUE(q.empty());
-  EXPECT_FALSE(q.tryPop());
+  EXPECT_FALSE(q.readIfNotEmpty());
   EXPECT_EQ(q.sizeGuess(), 0);
   EXPECT_TRUE(q.empty());
 }
 
 TEST(MPMCQueueTest, CopyableOnlyType) {
   struct Test {
-    Test() {}
+    Test() noexcept {}
     Test(const Test&) noexcept {}
     Test& operator=(const Test&) noexcept { return *this; }
     Test(Test&&) = delete;
   };
   MPMCQueue<Test> q(16);
   Test v;
-  q.emplace(v);
-  q.tryEmplace(v);
-  q.push(v);
-  q.tryEmplace(v);
-  q.push(Test());
-  q.tryPush(Test());
+  q.blockingWrite(v);
+  q.writeIfNotFull(v);
+  q.blockingWrite();
+  q.writeIfNotFull();
 }
 
 TEST(MPMCQueueTest, MovableOnlyType) {
   MPMCQueue<std::unique_ptr<int>> q(16);
-  q.emplace(std::unique_ptr<int>(new int(1)));
-  q.tryEmplace(std::unique_ptr<int>(new int(1)));
-  q.push(std::unique_ptr<int>(new int(1)));
-  q.tryEmplace(std::unique_ptr<int>(new int(1)));
+  q.blockingWrite(std::unique_ptr<int>(new int(1)));
+  q.writeIfNotFull(std::unique_ptr<int>(new int(1)));
+  q.blockingWrite(std::unique_ptr<int>(new int(1)));
+  q.writeIfNotFull(std::unique_ptr<int>(new int(1)));
 }
 
 TEST(MPMCQueueTest, ZeroCapacityThrows) {
@@ -144,7 +162,7 @@ TEST(MPMCQueueTest, FuzzTest) {
       while (!flag)
         ;
       for (auto j = i; j < numOps; j += numThreads) {
-        q.push(j);
+        q.blockingWrite(j);
       }
     });
   }
@@ -155,7 +173,7 @@ TEST(MPMCQueueTest, FuzzTest) {
       uint64_t threadSum = 0;
       for (auto j = i; j < numOps; j += numThreads) {
         uint64_t v;
-        q.pop(v);
+        q.blockingRead(v);
         threadSum += v;
       }
       sum += threadSum;
@@ -165,6 +183,135 @@ TEST(MPMCQueueTest, FuzzTest) {
   for (auto& thread : threads)
     thread.join();
   EXPECT_EQ(sum, numOps * (numOps - 1) / 2);
+}
+
+TEST(DynamicMPMCQueueTest, Capacity) {
+  size_t minCap = 10, mul = 2;
+  int tmp;
+  MPMCQueue<int, true> q(1024, minCap, mul);
+  for (int i = 0; i < minCap - 1; ++i) {
+    q.blockingWrite(1);
+  }
+  EXPECT_TRUE(q.writeIfNotFull(1));
+  EXPECT_FALSE(q.writeIfNotFull(1));
+  // after expand
+  EXPECT_FALSE(q.writeIfNotFull(1));
+  q.blockingRead(tmp);
+  EXPECT_TRUE(q.writeIfNotFull(1));
+  for (int i = 0; i < minCap * 2 - 1; ++i) {
+    q.blockingWrite(1);
+  }
+  EXPECT_TRUE(q.writeIfNotFull(1));
+  EXPECT_FALSE(q.writeIfNotFull(1));
+}
+
+template<typename T, typename... Args>
+void occurExpand(MPMCQueue<T, true>& q, size_t curCap, Args&&... args) {
+  // clear
+  while (q.readIfNotEmpty().has_value()) {}
+
+  for (int i = 0; i < curCap; ++i) {
+    q.blockingWrite(forward<Args>(args)...);
+  }
+  // expand
+  EXPECT_FALSE(q.writeIfNotFull(forward<Args>(args)...));
+  T tmp;
+  q.blockingRead(tmp);
+  q.blockingWrite(forward<Args>(args)...);
+}
+
+TEST(DynamicMPMCQueueTest, MoveConstructAssign) {
+  // Construct
+  MPMCQueue<int, true> q1(10, 1, 10);
+  q1.blockingWrite(1);
+  MPMCQueue<int, true> q2 = std::move(q1);
+  EXPECT_EQ(q1.allocatedCapacity(), 0);
+  EXPECT_EQ(q2.allocatedCapacity(), 1);
+  EXPECT_EQ(*q2.readIfNotEmpty(), 1);
+
+  // Assign
+  q2.blockingWrite(2);
+  q1 = std::move(q2);
+  EXPECT_EQ(q1.allocatedCapacity(), 1);
+  EXPECT_EQ(q2.allocatedCapacity(), 0);
+  EXPECT_EQ(*q1.readIfNotEmpty(), 2);
+
+  // After expand
+  occurExpand(q1, 1, 1);
+  q1.blockingWrite(1);
+  q2 = std::move(q1);
+  EXPECT_EQ(q1.allocatedCapacity(), 0);
+  EXPECT_EQ(q2.allocatedCapacity(), 10);
+  EXPECT_EQ(q2.size(), 2);
+  EXPECT_TRUE(q2.readIfNotEmpty().has_value());
+  EXPECT_TRUE(q2.readIfNotEmpty().has_value());
+}
+
+TEST(DynamicMPMCQueueTest, MovableOnlyType) {
+  size_t minCap = 100;
+  MPMCQueue<std::unique_ptr<int>, true> q(1024, minCap);
+  for (int i = 0; i < minCap / 2; ++i) {
+    q.blockingWrite(std::make_unique<int>(i));
+  }
+  EXPECT_EQ(q.sizeGuess(), 50);
+
+  for (int i = 0; i < minCap / 2; ++i) {
+    std::unique_ptr<int> val;
+    q.blockingRead(val);
+    EXPECT_EQ(*val, i);
+  }
+  EXPECT_TRUE(q.empty());
+}
+
+TEST(DynamicMPMCQueueTest, DestructAfterExpand) {
+  TestType::constructed.clear();
+  {
+    MPMCQueue<TestType, true> q(100, 10, 10);
+    occurExpand(q, 10);
+    for (int i = 0; i < 100; ++i) {
+      q.blockingWrite();
+    }
+  }
+  EXPECT_EQ(TestType::constructed.size(), 0);
+}
+
+TEST(DynamicMPMCQueueTest, Fuzz) {
+  const uint64_t numOps = 100000;
+  const uint64_t numThreads = 10;
+  MPMCQueue<uint64_t, true> q(numOps);
+  std::atomic<bool> flag(false);
+  std::vector<std::thread> threads;
+  std::atomic<uint64_t> sum(0);
+
+  for (uint64_t i = 0; i < numThreads; ++i) {
+    threads.emplace_back([&, i] {
+      while (!flag.load(std::memory_order_acquire));
+      for (auto j = i; j < numOps; j += numThreads) {
+        q.blockingWrite(j);
+      }
+    });
+  }
+
+  for (uint64_t i = 0; i < numThreads; ++i) {
+    threads.emplace_back([&, i] {
+      while (!flag.load(std::memory_order_acquire));
+      uint64_t threadSum = 0;
+      for (auto j = i; j < numOps; j += numThreads) {
+        uint64_t v;
+        q.blockingRead(v);
+        threadSum += v;
+      }
+      sum.fetch_add(threadSum, std::memory_order_acq_rel);
+    });
+  }
+
+  flag.store(true, std::memory_order_release);
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  EXPECT_EQ(sum.load(), numOps * (numOps - 1) / 2);
+  EXPECT_TRUE(q.empty());
 }
 
 int main(int argc, char** argv) {
