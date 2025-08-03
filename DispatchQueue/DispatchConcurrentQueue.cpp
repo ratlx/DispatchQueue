@@ -103,7 +103,7 @@ std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
   if (suspendCheck()) {
     return std::nullopt;
   }
-  if (auto task = taskQueue_.tryPop()) {
+  if (auto task = taskQueue_.readIfNotEmpty()) {
     return task;
   }
   return std::nullopt;

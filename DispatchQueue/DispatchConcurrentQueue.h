@@ -63,7 +63,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
         notifiable = false;
       }
     }
-    taskQueue_.emplace(this, std::forward<Args>(args)...);
+    taskQueue_.blockingWrite(this, std::forward<Args>(args)...);
     return notifiable;
   }
 

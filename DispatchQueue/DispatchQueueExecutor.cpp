@@ -69,7 +69,7 @@ void detail::DispatchQueueExecutor::addWithPriority(
 
   auto result = queueIdQueue_.addWithPriority(queueId, priority);
 
-  if (mayNeedToAddThreads && !result.reusedThread) {
+  if (mayNeedToAddThreads && !result.reusedThread_) {
     ensureActiveThreads();
   }
 }
@@ -129,7 +129,7 @@ void detail::DispatchQueueExecutor::addThreads(size_t n) {
 void detail::DispatchQueueExecutor::joinStoppedThreads(size_t n) {
   ThreadPtr thread;
   for (size_t i = 0; i < n; ++i) {
-    stoppedThreadQueue_.pop(thread);
+    stoppedThreadQueue_.blockingRead(thread);
     thread->handle.join();
   }
 }
@@ -268,7 +268,7 @@ void detail::DispatchQueueExecutor::threadRun(ThreadPtr thread) {
       std::unique_lock w{threadListLock_};
       if (threadShouldStop(task)) {
         threadList_.erase(thread);
-        stoppedThreadQueue_.push(thread);
+        stoppedThreadQueue_.blockingWrite(thread);
         return;
       }
       queueId = 0;
@@ -286,7 +286,7 @@ void detail::DispatchQueueExecutor::threadRun(ThreadPtr thread) {
       std::unique_lock w{threadListLock_};
       if (tryDecrToStop()) {
         threadList_.erase(thread);
-        stoppedThreadQueue_.push(thread);
+        stoppedThreadQueue_.blockingWrite(thread);
         return;
       }
     }

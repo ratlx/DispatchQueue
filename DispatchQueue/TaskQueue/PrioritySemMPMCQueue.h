@@ -4,11 +4,11 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <semaphore>
 #include <stdexcept>
-#include <atomic>
 #include <vector>
 
 #include "../Utility.h"
@@ -22,7 +22,7 @@ template <
     QueueBehaviorIfFull kBehavior = QueueBehaviorIfFull::THROW>
 class PrioritySemMPMCQueue : public BlockingQueue<T> {
  public:
-  PrioritySemMPMCQueue(int numPriorities, std::size_t capacity) {
+  PrioritySemMPMCQueue(int numPriorities, size_t capacity) {
     if (numPriorities <= 0) {
       throw std::invalid_argument("Number of priorities must be positive");
     } else if (numPriorities > 255) {
@@ -39,18 +39,18 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
   BlockingQueueAddResult addWithPriority(T elem, int8_t priority) override {
     auto mid = getNumPriorities() / 2;
     auto writeCount = writeCount_.fetch_add(1, std::memory_order_relaxed) + 1;
-    std::size_t idx = priority < 0
+    size_t idx = priority < 0
         ? std::max(0, mid + priority)
         : std::min(getNumPriorities() - 1, mid + priority);
 
     switch (kBehavior) {
       case QueueBehaviorIfFull::THROW:
-        if (!queues_[idx].tryPush(std::move(elem))) {
+        if (!queues_[idx].writeIfNotFull(std::move(elem))) {
           throw std::runtime_error("PrioritySemMPMCQueue full");
         }
         break;
       case QueueBehaviorIfFull::BLOCK:
-        queues_[idx].push(std::move(elem));
+        queues_[idx].blockingWrite(std::move(elem));
         break;
     }
     sem_.release();
@@ -60,7 +60,9 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
     return writeCount <= readCount_.load(std::memory_order_acquire);
   }
 
-  BlockingQueueAddResult add(T elem) override { return addWithPriority(std::move(elem), Priority::MID_PRI); }
+  BlockingQueueAddResult add(T elem) override {
+    return addWithPriority(std::move(elem), Priority::MID_PRI);
+  }
 
   void take(T& elem) override {
     readCount_.fetch_add(1, std::memory_order_acq_rel);
@@ -84,7 +86,7 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
         readCount_.fetch_sub(1, std::memory_order_acq_rel);
         // try again
         if (sem_.try_acquire()) {
-          readCount_.fetch_add(1, std::memory_order_seq_cst);
+          readCount_.fetch_add(1, std::memory_order_acq_rel);
           continue;
         }
         return std::nullopt;
@@ -111,7 +113,7 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
  private:
   std::optional<T> nonBlockingTake() noexcept {
     for (auto it = queues_.rbegin(); it != queues_.rend(); ++it) {
-      if (auto res = it->tryPop()) {
+      if (auto res = it->readIfNotEmpty()) {
         return res;
       }
     }
@@ -120,6 +122,6 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
 
   std::vector<MPMCQueue<T>> queues_;
   std::counting_semaphore<> sem_{0};
-  std::atomic<std::size_t> readCount_{0};
-  std::atomic<std::size_t> writeCount_{0};
+  std::atomic<size_t> readCount_{0};
+  std::atomic<size_t> writeCount_{0};
 };
