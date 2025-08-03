@@ -117,7 +117,7 @@ class DispatchKeepAlive {
  private:
   KeepAlive<> keepAlive_{this};
 
-  std::atomic<std::size_t> keepAliveCount_{1};
+  std::atomic<size_t> keepAliveCount_{1};
   std::binary_semaphore keepAliveRelease_{0};
   bool keepAliveJoined_{false};
 };
