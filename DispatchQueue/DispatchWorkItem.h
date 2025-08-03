@@ -25,10 +25,10 @@ struct DispatchWorkState {
   DispatchWorkState& operator=(const DispatchWorkState&) = delete;
   DispatchWorkState& operator=(DispatchWorkState&&) = delete;
 
-  std::atomic<bool> isFinished{false};
-  std::atomic<std::size_t> count{0};
-  std::atomic<bool> canceled{false};
-  std::atomic<bool> waited{false};
+  std::atomic<bool> isFinished_{false};
+  std::atomic<size_t> count_{0};
+  std::atomic<bool> canceled_{false};
+  std::atomic<bool> waited_{false};
 };
 
 struct return_void_t {};
@@ -116,18 +116,18 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
 
   void wait() {
     checkAndSetWait();
-    state_.isFinished.wait(false);
+    state_.isFinished_.wait(false);
   }
 
   bool tryWait(std::chrono::milliseconds timeout) {
     checkAndSetWait();
     auto deadline = now() + timeout;
     while (now() < deadline) {
-      if (state_.isFinished.load(std::memory_order_acquire))
+      if (state_.isFinished_.load(std::memory_order_acquire))
         return true;
       std::this_thread::yield();
     }
-    state_.waited.store(false, std::memory_order_release);
+    state_.waited_.store(false, std::memory_order_release);
     return false;
   }
 
@@ -155,11 +155,11 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
   }
 
   void cancel() noexcept {
-    state_.canceled.store(true, std::memory_order_relaxed);
+    state_.canceled_.store(true, std::memory_order_relaxed);
   }
 
   bool isCanceled() const noexcept {
-    return state_.canceled.load(std::memory_order_relaxed);
+    return state_.canceled_.load(std::memory_order_relaxed);
   }
 
   void perform() {
@@ -181,9 +181,9 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
 
  private:
   void finish(std::any res) noexcept {
-    if (!state_.isFinished.load(std::memory_order_acquire)) {
-      state_.isFinished.store(true, std::memory_order_release);
-      state_.isFinished.notify_one();
+    if (!state_.isFinished_.load(std::memory_order_acquire)) {
+      state_.isFinished_.store(true, std::memory_order_release);
+      state_.isFinished_.notify_one();
     }
     // do notify when finish
     nextWork_.doNotify(std::move(res));
@@ -191,26 +191,26 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
 
   // invoke it when func perform fails. cancel do notify
   void exceptionFinish() noexcept {
-    if (!state_.isFinished.load(std::memory_order_acquire)) {
-      state_.isFinished.store(true, std::memory_order_release);
-      state_.isFinished.notify_one();
+    if (!state_.isFinished_.load(std::memory_order_acquire)) {
+      state_.isFinished_.store(true, std::memory_order_release);
+      state_.isFinished_.notify_one();
     }
   }
 
   void checkAndSetWait() {
     bool wait = false;
-    if (!state_.waited.compare_exchange_strong(
+    if (!state_.waited_.compare_exchange_strong(
             wait, true, std::memory_order_acq_rel)) {
       throw std::runtime_error("Multiple waits is not allowed");
     }
-    if (state_.count.load(std::memory_order_acquire) > 1) {
+    if (state_.count_.load(std::memory_order_acquire) > 1) {
       throw std::runtime_error("Can't wait to perform multiple tasks");
     }
   }
 
   void checkAndSetCount() {
-    if (state_.count.fetch_add(1, std::memory_order_acq_rel) > 0) {
-      if (state_.waited.load(std::memory_order_acquire)) {
+    if (state_.count_.fetch_add(1, std::memory_order_acq_rel) > 0) {
+      if (state_.waited_.load(std::memory_order_acquire)) {
         throw std::runtime_error(
             "The task is only executed once while waiting");
       }
