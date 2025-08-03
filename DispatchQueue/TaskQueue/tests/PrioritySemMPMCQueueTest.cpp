@@ -58,8 +58,8 @@ TEST(PSMPMCQueue, Throw) {
 TEST(PSMPMCQueue, ThreadReused) {
   int n = 10;
   PrioritySemMPMCQueue<int, QueueBehaviorIfFull::THROW> q(1, n);
-  EXPECT_EQ(q.add(0).reusedThread, false);
-  EXPECT_EQ(q.add(0).reusedThread, false);
+  EXPECT_EQ(q.add(0).reusedThread_, false);
+  EXPECT_EQ(q.add(0).reusedThread_, false);
   int tmp;
   std::thread t([&] {
     q.take(tmp);
@@ -67,7 +67,7 @@ TEST(PSMPMCQueue, ThreadReused) {
     q.take(tmp);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  EXPECT_EQ(q.add(0).reusedThread, true);
+  EXPECT_EQ(q.add(0).reusedThread_, true);
   t.join();
 }
 
