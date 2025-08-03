@@ -8,13 +8,13 @@
 #include <optional>
 
 struct BlockingQueueAddResult {
-  BlockingQueueAddResult(bool reused = false) : reusedThread(reused) {}
-  bool reusedThread;
+  BlockingQueueAddResult(bool reused = false) : reusedThread_(reused) {}
+  bool reusedThread_;
 };
 
-template<typename T>
+template <typename T>
 class BlockingQueue {
-public:
+ public:
   virtual ~BlockingQueue() = default;
 
   virtual BlockingQueueAddResult add(T elem) = 0;
