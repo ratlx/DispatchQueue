@@ -15,7 +15,7 @@ namespace detail {
 #if defined(__cpp_lib_hardware_interference_size)
 using std::hardware_destructive_interference_size;
 #else
-constexpr size_t hardware_destructive_interference_size = 64;
+constexpr size_t hardware_destructive_interference_size = 128;
 #endif
 
 template <typename T>
@@ -24,45 +24,24 @@ template <typename T>
       (std::is_nothrow_copy_assignable_v<T> ||
        std::is_nothrow_move_assignable_v<T>))
 class alignas(hardware_destructive_interference_size) Slot {
- private:
-  enum class SlotAction { read, write };
-
   class TurnController {
    public:
     TurnController() noexcept = default;
 
-    template <SlotAction type>
-    void waitForTurn(size_t ticket) noexcept {
+    void waitForTurn(const size_t turn) noexcept {
       std::optional<WaitGuard> guard;
-      if constexpr (type == SlotAction::read) {
-        auto currentTurn = readTurn_.load(std::memory_order_acquire);
-        while (ticket != currentTurn) {
-          guard.emplace(readWaitCount_);
-          readTurn_.wait(currentTurn, std::memory_order_acquire);
-          currentTurn = readTurn_.load(std::memory_order_acquire);
-        }
-      } else if constexpr (type == SlotAction::write) {
-        auto currentTurn = writeTurn_.load(std::memory_order_acquire);
-        while (ticket != currentTurn) {
-          guard.emplace(writeWaitCount_);
-          writeTurn_.wait(currentTurn, std::memory_order_acquire);
-          currentTurn = writeTurn_.load(std::memory_order_acquire);
-        }
+      auto cur = turn_.load(std::memory_order_acquire);
+      while (turn != cur) {
+        guard.emplace(waitCount_);
+        turn_.wait(cur);
+        cur = turn_.load(std::memory_order_acquire);
       }
     }
 
-    template <SlotAction type>
-    void completeTurn(size_t ticket) noexcept {
-      if constexpr (type == SlotAction::read) {
-        writeTurn_.store(ticket, std::memory_order_release);
-        if (writeWaitCount_.load(std::memory_order_acquire) > 0) {
-          writeTurn_.notify_all();
-        }
-      } else if constexpr (type == SlotAction::write) {
-        readTurn_.store(ticket + 1, std::memory_order_release);
-        if (readWaitCount_.load(std::memory_order_acquire) > 0) {
-          readTurn_.notify_all();
-        }
+    void completeTurn(const size_t turn) noexcept {
+      turn_.store(turn + 1, std::memory_order_release);
+      if (waitCount_.load(std::memory_order_acquire) > 0) {
+        turn_.notify_all();
       }
     }
 
@@ -70,17 +49,15 @@ class alignas(hardware_destructive_interference_size) Slot {
     friend class Slot<T>;
 
     struct WaitGuard {
-      explicit WaitGuard(std::atomic<uint32_t>& guarded) : counter(guarded) {
+      explicit WaitGuard(std::atomic<size_t>& guarded) : counter(guarded) {
         counter.fetch_add(1, std::memory_order_acq_rel);
       }
       ~WaitGuard() { counter.fetch_sub(1, std::memory_order_acq_rel); }
-      std::atomic<uint32_t>& counter;
+      std::atomic<size_t>& counter;
     };
 
-    std::atomic<size_t> readTurn_{0};
-    std::atomic<size_t> writeTurn_{0};
-    std::atomic<uint32_t> readWaitCount_{0};
-    std::atomic<uint32_t> writeWaitCount_{0};
+    std::atomic<size_t> turn_;
+    std::atomic<size_t> waitCount_;
   };
 
  public:
@@ -92,31 +69,30 @@ class alignas(hardware_destructive_interference_size) Slot {
     }
   }
 
-  void read(size_t ticket, T& elem) noexcept {
-    turnController_.template waitForTurn<SlotAction::read>(ticket);
+  void read(size_t turn, T& elem) noexcept {
+    turnController_.waitForTurn(turn);
     elem = std::move(*reinterpret_cast<T*>(&storage_));
     destroy();
-    turnController_.template completeTurn<SlotAction::read>(ticket);
+    turnController_.completeTurn(turn);
   }
 
   template <typename... Args>
-  void write(size_t ticket, Args&&... args) noexcept {
-    turnController_.template waitForTurn<SlotAction::write>(ticket);
+  void write(size_t turn, Args&&... args) noexcept {
+    turnController_.waitForTurn(turn);
     construct(std::forward<Args>(args)...);
-    turnController_.template completeTurn<SlotAction::write>(ticket);
+    turnController_.completeTurn(turn);
   }
 
   bool writable(size_t ticket) const noexcept {
-    return ticket == turnController_.writeTurn_.load(std::memory_order_acquire);
+    return ticket == turnController_.turn_.load(std::memory_order_acquire);
   }
 
   bool readable(size_t ticket) const noexcept {
-    return ticket == turnController_.readTurn_.load(std::memory_order_acquire);
+    return ticket == turnController_.turn_.load(std::memory_order_acquire);
   }
 
   bool hasValue() const noexcept {
-    return turnController_.readTurn_.load(std::memory_order_relaxed) >
-        turnController_.writeTurn_.load(std::memory_order_relaxed);
+    return turnController_.turn_.load(std::memory_order_relaxed) & 1;
   }
 
   template <typename... Args>
@@ -257,9 +233,9 @@ class MPMCQueue {
   }
 
  private:
-  size_t readTurn(size_t i) const noexcept { return i / capacity_ + 1; }
+  size_t readTurn(size_t i) const noexcept { return i / capacity_ * 2 + 1; }
 
-  size_t writeTurn(size_t i) const noexcept { return i / capacity_; }
+  size_t writeTurn(size_t i) const noexcept { return i / capacity_ * 2; }
 
   size_t index(size_t i) const noexcept { return i % capacity_; }
 
@@ -586,12 +562,12 @@ class MPMCQueue<T, true> {
 
   size_t writeTurn(const size_t ticket, const size_t cap, const size_t offset)
       const noexcept {
-    return (ticket - offset) / cap;
+    return (ticket - offset) / cap * 2;
   }
 
   size_t readTurn(const size_t ticket, const size_t cap, const size_t offset)
       const noexcept {
-    return (ticket - offset) / cap + 1;
+    return (ticket - offset) / cap * 2 + 1;
   }
 
   size_t maxCapacity_;
