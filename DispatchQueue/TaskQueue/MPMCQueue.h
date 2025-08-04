@@ -5,8 +5,8 @@
 #pragma once
 
 #include <atomic>
+#include <algorithm>
 #include <cassert>
-#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
