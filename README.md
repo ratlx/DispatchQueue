@@ -67,7 +67,7 @@ All types of DispatchQueues (both serial and concurrent) are scheduled by a unif
 
 ### Todo
 
-- [ ] Replace the underlying bounded queue with an unbounded MPMC queue.
+- [x] Replace the underlying bounded queue with a dynamic version.
 - [ ] Conduct performance testing for DispatchQueue.
 - [x] Support tasks with return values and a notify callback mechanism.
 - [ ] Support the `Barrier` flag for `DispatchWorkItem`.

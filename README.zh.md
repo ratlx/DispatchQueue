@@ -66,7 +66,7 @@ sync task thread: 0x1fac45f00
 
 ### Todo
 
-- [ ] 将底层容器由有界队列替换为无界 MPMC 队列
+- [x] 将底层容器由有界 MPMC 队列替换为可扩容队列
 - [ ] 对 DispatchQueue 进行性能测试
 - [x] 支持带返回值的任务 和 notify 回调机制
 - [ ] 支持 DispatchWorkItem 的 flag: Barrier 特性
