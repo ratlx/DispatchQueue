@@ -14,6 +14,7 @@
 #include "DispatchQueue.h"
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
+#include "DispatchWorkItem.h"
 #include "Utility.h"
 
 class DispatchSerialQueue : public DispatchQueue {
@@ -26,34 +27,46 @@ class DispatchSerialQueue : public DispatchQueue {
   ~DispatchSerialQueue() override;
 
   void sync(Func<void> func) override;
-  void sync(DispatchWorkItem& workItem) override;
+
+  template <typename T>
+  void sync(DispatchWorkItem<T>& workItem) {
+    auto task = detail::DispatchTask(&workItem, false);
+    addTask(task);
+    task.performWithQueue(getKeepAliveToken(this));
+    notifyNextWork();
+  }
+
   // return nullopt if func fail.
   template <typename R>
-    requires std::is_nothrow_move_constructible_v<R>
   std::optional<R> sync(Func<R> func) {
-    auto waitSem = std::make_shared<std::binary_semaphore>(0);
-    auto res = addTask(waitSem);
-    if (res.notifiable) {
-      notifyNextWork();
-    }
-    waitSem->acquire();
-    auto ret =
-        detail::DispatchTask::makeSyncRetFunc<R>(this, std::move(func))();
+    auto promise = std::make_shared<std::promise<R>>();
+    auto futrue = promise->get_future();
+    auto task =
+        detail::DispatchTask(std::move(func), std::move(promise), false);
+    addTask(task);
+    task.performWithQueue(getKeepAliveToken(this));
     notifyNextWork();
-    return ret;
+    try {
+      return futrue.get();
+    } catch (...) {
+      return std::nullopt;
+    }
   }
 
   void async(Func<void> func) override;
   void async(Func<void> func, DispatchGroup& group) override;
-  void async(DispatchWorkItem& workItem) override;
+
+  template <typename T>
+  void async(DispatchWorkItem<T>& workItem) {
+    asyncImpl(&workItem);
+  }
+
   template <typename R>
   std::future<R> async(Func<R> func) noexcept {
     auto promise = std::make_shared<std::promise<R>>();
-    auto res = addTask(std::move(func), promise);
-    if (res.notifiable) {
-      notifyNextWork();
-    }
-    return promise->get_future();
+    auto future = promise->get_future();
+    addTask(std::move(func), std::move(promise), true);
+    return future;
   }
 
   void activate() override;
@@ -61,18 +74,24 @@ class DispatchSerialQueue : public DispatchQueue {
   void resume() override;
 
  protected:
-  template <typename... Args>
-  detail::DispatchQueueAddResult addTask(Args&&... args) {
-    std::lock_guard lock{taskQueueLock_};
-    taskQueue_.emplace(this, std::forward<Args>(args)...);
+  void asyncImpl(detail::DispatchWorkItemBase*) override;
 
-    if (isInactive_.load(std::memory_order_acquire) ||
+  template <typename... Args>
+  void addTask(Args&&... args) {
+    {
+      std::lock_guard lock{taskQueueLock_};
+      taskQueue_.emplace(std::forward<Args>(args)...);
+    }
+
+    if (inactive_.load(std::memory_order_acquire) ||
         suspendCount_.load(std::memory_order_acquire) > 0) {
-      return false;
+      return;
     }
     bool e = false;
-    threadAttach_.compare_exchange_strong(e, true, std::memory_order_acq_rel);
-    return !e;
+    if (threadAttach_.compare_exchange_strong(
+            e, true, std::memory_order_acq_rel)) {
+      notifyNextWork();
+    }
   }
 
   std::optional<detail::DispatchTask> tryTake() override;

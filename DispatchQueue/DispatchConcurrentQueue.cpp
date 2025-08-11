@@ -9,6 +9,8 @@
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
 
+constexpr static size_t kDefaultTaskQueueSize = 1000000;
+
 DispatchConcurrentQueue::DispatchConcurrentQueue(
     std::string label, int8_t priority, bool isActive)
     : DispatchQueue(
@@ -17,7 +19,7 @@ DispatchConcurrentQueue::DispatchConcurrentQueue(
           isActive ? DispatchAttribute::concurrent
                    : DispatchAttribute::concurrent |
                   DispatchAttribute::initiallyInactive),
-      taskQueue_(1024) {
+      taskQueue_(kDefaultTaskQueueSize) {
   executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
   id_ = executor_->registerDispatchQueue(this);
 }
@@ -28,49 +30,30 @@ DispatchConcurrentQueue::~DispatchConcurrentQueue() {
 }
 
 void DispatchConcurrentQueue::sync(Func<void> func) noexcept {
-  isInactive_.wait(true);
-  isSuspend_.wait(true);
-  detail::DispatchTask::makeFunc(this, std::move(func))();
-}
-
-void DispatchConcurrentQueue::sync(DispatchWorkItem& workItem) {
-  isInactive_.wait(true);
-  isSuspend_.wait(true);
-  workItem.perform();
+  inactive_.wait(true);
+  suspend_.wait(true);
+  detail::DispatchTask::makeTaskFunc(std::move(func))(
+      detail::DispatchKeepAlive::getKeepAliveToken(this));
 }
 
 void DispatchConcurrentQueue::async(Func<void> func) {
-  auto res = addTask(std::move(func), true);
-  if (res.notifiable) {
-    executor_->addWithPriority(id_, priority_);
-  }
-}
-
-void DispatchConcurrentQueue::async(DispatchWorkItem& work) {
-  auto res = addTask(work, true);
-  if (res.notifiable) {
-    executor_->addWithPriority(id_, priority_);
-  }
+  addTask(std::move(func), true);
 }
 
 void DispatchConcurrentQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto res = addTask(std::move(func), &group);
-  if (res.notifiable) {
-    executor_->addWithPriority(id_, priority_);
-  }
+  addTask(std::move(func), &group);
 }
 
 void DispatchConcurrentQueue::activate() {
   size_t n = 0;
-  {
+  bool e = true;
+  if (inactive_.compare_exchange_strong(e, false, std::memory_order_acq_rel)) {
+    // wake up all the sync task.
+    inactive_.notify_all();
+
     std::unique_lock l{taskLock_};
-    bool e = true;
-    if (isInactive_.compare_exchange_strong(
-            e, false, std::memory_order_relaxed) &&
-        !isSuspend_.load(std::memory_order_relaxed)) {
-      // wake up all the sync task.
-      isInactive_.notify_all();
+    if (!suspend_.load(std::memory_order_relaxed)) {
       n = taskToAdd_.exchange(0, std::memory_order_relaxed);
     }
   }
@@ -81,7 +64,7 @@ void DispatchConcurrentQueue::activate() {
 
 void DispatchConcurrentQueue::suspend() {
   if (suspendCount_.fetch_add(1, std::memory_order_acq_rel) == 0) {
-    isSuspend_.store(true, std::memory_order_release);
+    suspend_.store(true, std::memory_order_release);
   }
 }
 
@@ -89,14 +72,22 @@ void DispatchConcurrentQueue::resume() {
   size_t n = 0;
   if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
     std::unique_lock l{taskLock_};
-    isSuspend_.store(false, std::memory_order_release);
-    // wake up all the sync task
-    isSuspend_.notify_all();
-    n = taskToAdd_.exchange(0, std::memory_order_relaxed);
+    suspend_.store(false, std::memory_order_release);
+    if (!inactive_.load(std::memory_order_acquire)) {
+      n = taskToAdd_.exchange(0, std::memory_order_relaxed);
+
+      l.unlock();
+      // wake up all the sync task
+      suspend_.notify_all();
+    }
   }
   for (int i = 0; i < n; ++i) {
     executor_->addWithPriority(id_, priority_);
   }
+}
+
+void DispatchConcurrentQueue::asyncImpl(detail::DispatchWorkItemBase* wptr) {
+  addTask(wptr, true);
 }
 
 std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
@@ -111,7 +102,7 @@ std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
 
 bool DispatchConcurrentQueue::suspendCheck() {
   std::shared_lock l{taskLock_};
-  if (isSuspend_.load(std::memory_order_relaxed)) {
+  if (suspend_.load(std::memory_order_acquire)) {
     taskToAdd_.fetch_add(1, std::memory_order_relaxed);
     return true;
   }

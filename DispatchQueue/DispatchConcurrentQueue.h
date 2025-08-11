@@ -13,6 +13,7 @@
 #include "DispatchQueue.h"
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
+#include "DispatchWorkItem.h"
 #include "TaskQueue/MPMCQueue.h"
 #include "Utility.h"
 
@@ -26,25 +27,36 @@ class DispatchConcurrentQueue : public DispatchQueue {
   ~DispatchConcurrentQueue() override;
 
   void sync(Func<void> func) noexcept override;
-  void sync(DispatchWorkItem& workItem) override;
+
+  template <typename T>
+  void sync(DispatchWorkItem<T>& workItem) {
+    inactive_.wait(true);
+    suspend_.wait(true);
+    workItem.performWithQueue(getKeepAliveToken(this));
+  }
+
   template <typename R>
   std::optional<R> sync(Func<R> func) noexcept {
-    isInactive_.wait(true);
-    isSuspend_.wait(true);
-    return detail::DispatchTask::makeSyncRetFunc<R>(this, std::move(func))();
+    inactive_.wait(true);
+    suspend_.wait(true);
+    return detail::DispatchTask::makeOptionalTaskFunc<R>(std::move(func))(
+        getKeepAliveToken(this));
   }
 
   void async(Func<void> func) override;
   void async(Func<void> func, DispatchGroup& group) override;
-  void async(DispatchWorkItem& workItem) override;
+
+  template <typename T>
+  void async(DispatchWorkItem<T>& workItem) {
+    asyncImpl(&workItem);
+  }
+
   template <typename R>
   std::future<R> async(Func<R> func) noexcept {
     auto promise = std::make_shared<std::promise<R>>();
-    auto res = addTask(std::move(func), promise);
-    if (res.notifiable) {
-      executor_->addWithPriority(id_, priority_);
-    }
-    return promise->get_future();
+    auto future = promise->get_future();
+    addTask(std::move(func), std::move(promise), true);
+    return future;
   }
 
   void activate() override;
@@ -52,29 +64,30 @@ class DispatchConcurrentQueue : public DispatchQueue {
   void resume() override;
 
  protected:
+  void asyncImpl(detail::DispatchWorkItemBase*) override;
+
   template <typename... Args>
-  detail::DispatchQueueAddResult addTask(Args&&... args) {
-    bool notifiable = true;
+  void addTask(Args&&... args) {
+    taskQueue_.blockingWrite(std::forward<Args>(args)...);
     {
       std::shared_lock l{taskLock_};
-      if (isInactive_.load(std::memory_order_relaxed) ||
-          isSuspend_.load(std::memory_order_relaxed)) {
+      if (inactive_.load(std::memory_order_acquire) ||
+          suspend_.load(std::memory_order_acquire)) {
         taskToAdd_.fetch_add(1, std::memory_order_relaxed);
-        notifiable = false;
+        return;
       }
     }
-    taskQueue_.blockingWrite(this, std::forward<Args>(args)...);
-    return notifiable;
+    executor_->addWithPriority(id_, priority_);
   }
 
   std::optional<detail::DispatchTask> tryTake() override;
   bool suspendCheck() override;
 
  private:
-  MPMCQueue<detail::DispatchTask> taskQueue_;
+  MPMCQueue<detail::DispatchTask, true> taskQueue_;
   std::shared_mutex taskLock_;
   std::atomic<size_t> taskToAdd_;
-  std::atomic<bool> isSuspend_{false};
+  std::atomic<bool> suspend_{false};
 
   DispatchKeepAlive::KeepAlive<detail::DispatchQueueExecutor> executor_{};
 };

@@ -26,51 +26,24 @@ DispatchSerialQueue::~DispatchSerialQueue() {
 }
 
 void DispatchSerialQueue::sync(Func<void> func) {
-  auto task = detail::DispatchTask(this, std::move(func), false);
-  auto res = addTask(task.getWaitSem());
-  if (res.notifiable) {
-    notifyNextWork();
-  }
-  task.perform();
+  auto task = detail::DispatchTask(std::move(func), false);
+  addTask(task);
+  task.performWithQueue(getKeepAliveToken(this));
   notifyNextWork();
-}
-
-void DispatchSerialQueue::sync(DispatchWorkItem& workItem) {
-  auto task = detail::DispatchTask(this, workItem, false);
-  auto res = addTask(task.getWaitSem());
-  if (res.notifiable) {
-    notifyNextWork();
-  }
-  task.perform();
-  notifyNextWork();
-}
-
-void DispatchSerialQueue::async(DispatchWorkItem& workItem) {
-  auto res = addTask(workItem, true);
-  if (res.notifiable) {
-    notifyNextWork();
-  }
 }
 
 void DispatchSerialQueue::async(Func<void> func) {
-  auto res = addTask(std::move(func), true);
-  if (res.notifiable) {
-    notifyNextWork();
-  }
+  addTask(std::move(func), true);
 }
 
 void DispatchSerialQueue::async(Func<void> func, DispatchGroup& group) {
   group.enter();
-  auto res = addTask(std::move(func), &group);
-  if (res.notifiable) {
-    notifyNextWork();
-  }
+  addTask(std::move(func), &group);
 }
 
 void DispatchSerialQueue::activate() {
   auto e = true;
-  if (isInactive_.compare_exchange_strong(
-          e, false, std::memory_order_acq_rel) &&
+  if (inactive_.compare_exchange_strong(e, false, std::memory_order_acq_rel) &&
       suspendCount_.load(std::memory_order_acquire) <= 0) {
     e = false;
     if (threadAttach_.compare_exchange_strong(
@@ -86,13 +59,17 @@ void DispatchSerialQueue::suspend() {
 
 void DispatchSerialQueue::resume() {
   if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1 &&
-      !isInactive_.load(std::memory_order_acquire)) {
+      !inactive_.load(std::memory_order_acquire)) {
     auto e = false;
     if (threadAttach_.compare_exchange_strong(
             e, true, std::memory_order_acq_rel)) {
       notifyNextWork();
     }
   }
+}
+
+void DispatchSerialQueue::asyncImpl(detail::DispatchWorkItemBase* wptr) {
+  addTask(wptr, true);
 }
 
 std::optional<detail::DispatchTask> DispatchSerialQueue::tryTake() {
