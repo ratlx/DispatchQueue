@@ -33,10 +33,10 @@ TEST(PSMPMCQueue, IntQueue) {
 }
 
 TEST(PSMPMCQueue, MoveableOnlyType) {
-  PrioritySemMPMCQueue<std::unique_ptr<int>, QueueBehaviorIfFull::THROW> q1(
-      1, 16);
-  PrioritySemMPMCQueue<std::unique_ptr<int>, QueueBehaviorIfFull::BLOCK> q2(
-      1, 16);
+  PrioritySemMPMCQueue<std::unique_ptr<int>, false, QueueBehaviorIfFull::THROW>
+      q1(1, 16);
+  PrioritySemMPMCQueue<std::unique_ptr<int>, false, QueueBehaviorIfFull::BLOCK>
+      q2(1, 16);
   q1.add(std::make_unique<int>(1));
   q2.add(std::make_unique<int>(2));
   std::unique_ptr<int> t;
@@ -48,7 +48,7 @@ TEST(PSMPMCQueue, MoveableOnlyType) {
 
 TEST(PSMPMCQueue, Throw) {
   int n = 10;
-  PrioritySemMPMCQueue<int, QueueBehaviorIfFull::THROW> q(1, n);
+  PrioritySemMPMCQueue<int, false, QueueBehaviorIfFull::THROW> q(1, n);
   for (int i = 0; i < n; ++i) {
     EXPECT_NO_THROW(q.add(0));
   }
@@ -57,7 +57,7 @@ TEST(PSMPMCQueue, Throw) {
 
 TEST(PSMPMCQueue, ThreadReused) {
   int n = 10;
-  PrioritySemMPMCQueue<int, QueueBehaviorIfFull::THROW> q(1, n);
+  PrioritySemMPMCQueue<int, false, QueueBehaviorIfFull::THROW> q(1, n);
   EXPECT_EQ(q.add(0).reusedThread_, false);
   EXPECT_EQ(q.add(0).reusedThread_, false);
   int tmp;
@@ -74,8 +74,8 @@ TEST(PSMPMCQueue, ThreadReused) {
 TEST(PSMPMCQueue, Concurrent) {
   int m = 255;
   int n = 100;
-  PrioritySemMPMCQueue<int, QueueBehaviorIfFull::BLOCK> q(m, n / 3);
-  int l = - m / 2;
+  PrioritySemMPMCQueue<int, false, QueueBehaviorIfFull::BLOCK> q(m, n / 3);
+  int l = -m / 2;
   int r = m / 2 + (m & 1);
 
   std::vector<std::thread> c;
@@ -100,10 +100,10 @@ TEST(PSMPMCQueue, Concurrent) {
       }
     });
   }
-  for (auto& ct: c) {
+  for (auto& ct : c) {
     ct.join();
   }
-  for (auto& pt: p) {
+  for (auto& pt : p) {
     pt.join();
   }
   EXPECT_EQ(q.size(), 0);

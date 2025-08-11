@@ -19,6 +19,7 @@ enum class QueueBehaviorIfFull { THROW, BLOCK };
 
 template <
     typename T,
+    bool Dynamic = false,
     QueueBehaviorIfFull kBehavior = QueueBehaviorIfFull::THROW>
 class PrioritySemMPMCQueue : public BlockingQueue<T> {
  public:
@@ -120,7 +121,7 @@ class PrioritySemMPMCQueue : public BlockingQueue<T> {
     return std::nullopt;
   }
 
-  std::vector<MPMCQueue<T>> queues_;
+  std::vector<MPMCQueue<T, Dynamic>> queues_;
   std::counting_semaphore<> sem_{0};
   std::atomic<size_t> readCount_{0};
   std::atomic<size_t> writeCount_{0};
