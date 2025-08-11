@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include <atomic>
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <new>
 #include <optional>
@@ -19,11 +19,12 @@ constexpr size_t hardware_destructive_interference_size = 128;
 #endif
 
 template <typename T>
-  requires(
-      std::is_nothrow_destructible_v<T> &&
-      (std::is_nothrow_copy_assignable_v<T> ||
-       std::is_nothrow_move_assignable_v<T>))
+  requires(std::is_nothrow_destructible_v<T>)
 class alignas(hardware_destructive_interference_size) Slot {
+  static_assert(
+      std::is_nothrow_copy_assignable_v<T> ||
+      std::is_nothrow_move_assignable_v<T>);
+
   class TurnController {
    public:
     TurnController() noexcept = default;
@@ -50,9 +51,9 @@ class alignas(hardware_destructive_interference_size) Slot {
 
     struct WaitGuard {
       explicit WaitGuard(std::atomic<size_t>& guarded) : counter(guarded) {
-        counter.fetch_add(1, std::memory_order_acq_rel);
+        counter.fetch_add(1, std::memory_order_release);
       }
-      ~WaitGuard() { counter.fetch_sub(1, std::memory_order_acq_rel); }
+      ~WaitGuard() { counter.fetch_sub(1, std::memory_order_release); }
       std::atomic<size_t>& counter;
     };
 
@@ -110,6 +111,7 @@ class alignas(hardware_destructive_interference_size) Slot {
 } // namespace detail
 
 template <typename T, bool Dynamic = false>
+  requires std::is_default_constructible_v<T>
 class MPMCQueue {
  public:
   MPMCQueue() noexcept
@@ -228,9 +230,7 @@ class MPMCQueue {
 
   bool empty() const noexcept { return size() <= 0; }
 
-  size_t capacity() const noexcept {
-    return capacity_;
-  }
+  size_t capacity() const noexcept { return capacity_; }
 
  private:
   size_t readTurn(size_t i) const noexcept { return i / capacity_ * 2 + 1; }
@@ -250,6 +250,7 @@ class MPMCQueue {
 };
 
 template <typename T>
+  requires std::is_default_constructible_v<T>
 class MPMCQueue<T, true> {
   using Slot = detail::Slot<T>;
 
@@ -261,8 +262,9 @@ class MPMCQueue<T, true> {
 
   enum {
     kSeqlockBits = 6,
-    kDefaultMinDynamicCapacity = 16,
-    kDefaultExpansionMultiplier = 8,
+    kDefaultMinDynamicCapacity = 10,
+    kExtraCapacity = 10,
+    kDefaultExpansionMultiplier = 10
   };
 
  public:
@@ -285,7 +287,8 @@ class MPMCQueue<T, true> {
     dcapacity_.store(minCapacity, std::memory_order_relaxed);
     dmult_ = expansionMultiplier;
     auto curCap = minCapacity;
-    dslots_.store(new Slot[curCap + 1], std::memory_order_relaxed);
+    dslots_.store(
+        new Slot[actualCapacity(curCap) + 1], std::memory_order_relaxed);
     size_t maxClosed = 0;
     for (size_t expanded = curCap; expanded < maxCapacity_;
          expanded *= dmult_) {
@@ -375,15 +378,16 @@ class MPMCQueue<T, true> {
       seqlockReadSection(state, slots, cap);
       auto curCap = cap;
       maybeUpdateFromClosed(state, ticket, slots, cap, offset);
-      if (static_cast<ssize_t>(
-              ticket -
-              std::max(popTicket_.load(std::memory_order_acquire), offset)) >=
-          cap) {
+      auto curSize = static_cast<ssize_t>(
+          ticket -
+          std::max(popTicket_.load(std::memory_order_acquire), offset));
+      if (curSize >= cap) {
         // if cap != curCap, it means that the queue has been expanded
         if (cap == curCap && tryExpand(state, cap)) {
           continue;
+        } else if (curSize >= actualCapacity(cap)) {
+          return false;
         }
-        return false;
       }
       if (pushTicket_.compare_exchange_strong(ticket, ticket + 1)) {
         break;
@@ -458,9 +462,7 @@ class MPMCQueue<T, true> {
     return dcapacity_.load(std::memory_order_relaxed);
   }
 
-  size_t capacity() const noexcept {
-    return maxCapacity_;
-  }
+  size_t capacity() const noexcept { return maxCapacity_; }
 
  private:
   void seqlockReadSection(
@@ -473,8 +475,9 @@ class MPMCQueue<T, true> {
       }
       slots = dslots_.load(std::memory_order_relaxed);
       cap = dcapacity_.load(std::memory_order_relaxed);
+      std::atomic_thread_fence(std::memory_order_acquire);
       // validate seqlock
-    } while (state != dstate_.load(std::memory_order_acquire));
+    } while (state != dstate_.load(std::memory_order_relaxed));
   }
 
   bool maybeUpdateFromClosed(
@@ -514,7 +517,7 @@ class MPMCQueue<T, true> {
               popTicket_.load(std::memory_order_acquire)) +
           1;
       auto newCapacity = std::min(dmult_ * cap, maxCapacity_);
-      Slot* newSlots = new (std::nothrow) Slot[newCapacity + 1];
+      Slot* newSlots = new (std::nothrow) Slot[actualCapacity(newCapacity) + 1];
       if (newSlots == nullptr) {
         dstate_.store(state, std::memory_order_release);
         // Notify all threads that are waiting for this expansion
@@ -557,17 +560,26 @@ class MPMCQueue<T, true> {
 
   size_t index(const size_t ticket, const size_t cap, const size_t offset)
       const noexcept {
-    return (ticket - offset) % cap;
+    return (ticket - offset) % actualCapacity(cap);
   }
 
   size_t writeTurn(const size_t ticket, const size_t cap, const size_t offset)
       const noexcept {
-    return (ticket - offset) / cap * 2;
+    return (ticket - offset) / actualCapacity(cap) * 2;
   }
 
   size_t readTurn(const size_t ticket, const size_t cap, const size_t offset)
       const noexcept {
-    return (ticket - offset) / cap * 2 + 1;
+    return (ticket - offset) / actualCapacity(cap) * 2 + 1;
+  }
+
+  // In my implementation, ticket is bound to slot. Even after expanding, if
+  // the ticket was obtained before expand, the newly allocated space cannot be
+  // used, but can only be written on the old slot. Therefore, kExtraCapacity
+  // is increased to reduce the possibility of blockage (which cannot be
+  // completely eliminated).
+  size_t actualCapacity(const size_t cap) const noexcept {
+    return cap + kExtraCapacity;
   }
 
   size_t maxCapacity_;
