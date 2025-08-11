@@ -30,15 +30,15 @@ class DispatchTask {
 
   class AsyncTask {
    public:
-    AsyncTask() = default;
+    AsyncTask() noexcept = default;
 
     explicit AsyncTask(TaskFunc f) noexcept : task_(std::move(f)) {}
 
-    AsyncTask(TaskFunc f, DispatchGroup* g)
+    AsyncTask(TaskFunc f, DispatchGroup* g) noexcept
         : task_(std::move(f)),
           groupKA_(DispatchKeepAlive::getKeepAliveToken(g)) {}
 
-    explicit AsyncTask(DispatchWorkItemBase* w)
+    explicit AsyncTask(DispatchWorkItemBase* w) noexcept
         : task_(DispatchKeepAlive::getKeepAliveToken(w)) {}
 
     AsyncTask(const AsyncTask& other) noexcept = default;
@@ -119,7 +119,9 @@ class DispatchTask {
     WaitSem wait_{std::make_shared<std::binary_semaphore>(0)};
   };
 
-  DispatchTask() = default;
+  DispatchTask() noexcept = default;
+
+  DispatchTask(nullptr_t) noexcept : DispatchTask() {};
 
   DispatchTask(Func<void> f, DispatchGroup* g) noexcept
       : task_(AsyncTask(makeTaskFunc(std::move(f)), g)) {}

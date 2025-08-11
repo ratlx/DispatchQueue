@@ -19,7 +19,9 @@ class DispatchKeepAlive {
    public:
     KeepAlive() noexcept = default;
 
-    KeepAlive(const KeepAlive& other)
+    KeepAlive(nullptr_t) noexcept : KeepAlive() {}
+
+    KeepAlive(const KeepAlive& other) noexcept
         : KeepAlive(DispatchKeepAlive::getKeepAliveToken(other.ptr_)) {}
     KeepAlive& operator=(const KeepAlive& other) {
       if (this == &other) {
@@ -60,9 +62,9 @@ class DispatchKeepAlive {
       return operator=(KeepAlive(std::move(other)));
     }
 
-    ~KeepAlive() { reset(); }
+    ~KeepAlive() noexcept { reset(); }
 
-    void reset() {
+    void reset() noexcept {
       if (ptr_) {
         ptr_->keepAliveRelease();
         ptr_ = nullptr;
@@ -83,7 +85,7 @@ class DispatchKeepAlive {
 
   template <typename QT>
     requires std::is_base_of_v<DispatchKeepAlive, QT>
-  static KeepAlive<QT> getKeepAliveToken(QT* ptr) {
+  static KeepAlive<QT> getKeepAliveToken(QT* ptr) noexcept {
     if (!ptr) {
       return {};
     }
@@ -93,10 +95,8 @@ class DispatchKeepAlive {
   }
 
  protected:
-  void keepAliveAcquire() {
-    if (keepAliveCount_.fetch_add(1, std::memory_order_acq_rel) == 0) {
-      throw std::runtime_error("never increment from 0");
-    }
+  void keepAliveAcquire() noexcept {
+    keepAliveCount_.fetch_add(1, std::memory_order_acq_rel);
   }
 
   void keepAliveRelease() {
