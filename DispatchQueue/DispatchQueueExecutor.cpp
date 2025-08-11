@@ -14,16 +14,25 @@
 #include "TaskQueue/PrioritySemMPMCQueue.h"
 #include "Utility.h"
 
-static auto threadtimeout_ms = std::chrono::milliseconds(60000);
+static constexpr auto threadtimeout = std::chrono::minutes(1);
 
 std::atomic<size_t> detail::DispatchQueueExecutor::Thread::nextId{0};
 
 detail::DispatchQueueExecutor::DispatchQueueExecutor(
     size_t numThreads, uint8_t numPriorities, size_t maxQueueSize)
-    : stoppedThreadQueue_(maxQueueSize),
-      maxThreads_(numThreads),
-      threadTimeout_(threadtimeout_ms),
-      queueIdQueue_(numPriorities, maxQueueSize) {}
+    : maxThreads_(numThreads),
+      threadTimeout_(threadtimeout),
+      queueIdQueue_(
+          std::make_unique<PrioritySemMPMCQueue<size_t, false, QueueBehaviorIfFull::BLOCK>>(
+              numPriorities, maxQueueSize)) {}
+
+detail::DispatchQueueExecutor::DispatchQueueExecutor(
+    size_t numThreads, uint8_t numPriorities)
+    : maxThreads_(numThreads),
+      threadTimeout_(threadtimeout),
+      queueIdQueue_(
+          std::make_unique<PrioritySemMPMCQueue<size_t, true, QueueBehaviorIfFull::BLOCK>>(
+              numPriorities, kMaxQueueSize)) {}
 
 detail::DispatchQueueExecutor::~DispatchQueueExecutor() {
   joinKeepAliveOnce();
@@ -35,16 +44,15 @@ void detail::DispatchQueueExecutor::join() {
   stopAndJoinAllThreads(true);
 }
 
-detail::DispatchKeepAlive::KeepAlive<detail::DispatchQueueExecutor>
-detail::DispatchQueueExecutor::getGlobalExecutor() {
+detail::ExecutorKA detail::DispatchQueueExecutor::getGlobalExecutor() {
   static std::optional<DispatchQueueExecutor> globalExecutor;
   static std::once_flag once;
 
   std::call_once(once, [] {
-    globalExecutor.emplace(std::thread::hardware_concurrency(), 3, 1024);
+    globalExecutor.emplace(std::thread::hardware_concurrency(), kDefaultPriority);
   });
 
-  return DispatchKeepAlive::getKeepAliveToken(&*globalExecutor);
+  return getKeepAliveToken(&*globalExecutor);
 }
 
 void detail::DispatchQueueExecutor::stop() {
@@ -65,9 +73,9 @@ void detail::DispatchQueueExecutor::addWithPriority(
           maxThreads_.load(std::memory_order_relaxed);
   auto ka = mayNeedToAddThreads
       ? getKeepAliveToken(this)
-      : DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>();
+      : ExecutorKA();
 
-  auto result = queueIdQueue_.addWithPriority(queueId, priority);
+  auto result = queueIdQueue_->addWithPriority(queueId, priority);
 
   if (mayNeedToAddThreads && !result.reusedThread_) {
     ensureActiveThreads();
@@ -75,7 +83,7 @@ void detail::DispatchQueueExecutor::addWithPriority(
 }
 
 size_t detail::DispatchQueueExecutor::getQueueSize() const noexcept {
-  return queueIdQueue_.size();
+  return queueIdQueue_->size();
 }
 
 size_t detail::DispatchQueueExecutor::registerDispatchQueue(DispatchQueue* q) {
@@ -91,8 +99,7 @@ void detail::DispatchQueueExecutor::deregisterDispatchQueue(DispatchQueue* q) {
   dispatchQueueList_[q->id_].reset();
 }
 
-detail::DispatchKeepAlive::KeepAlive<DispatchQueue>
-detail::DispatchQueueExecutor::getQueueToken(size_t id) {
+detail::QueueKA detail::DispatchQueueExecutor::getQueueToken(size_t id) {
   std::shared_lock r{dispatchQueueLock_};
   return dispatchQueueList_[id];
 }
@@ -127,9 +134,8 @@ void detail::DispatchQueueExecutor::addThreads(size_t n) {
 }
 
 void detail::DispatchQueueExecutor::joinStoppedThreads(size_t n) {
-  ThreadPtr thread;
   for (size_t i = 0; i < n; ++i) {
-    stoppedThreadQueue_.blockingRead(thread);
+    auto thread = stoppedThreadQueue_.take();
     thread->handle.join();
   }
 }
@@ -166,7 +172,7 @@ void detail::DispatchQueueExecutor::ensureActiveThreads() {
 void detail::DispatchQueueExecutor::stopThreads(size_t n) {
   threadsToStop_.fetch_add(static_cast<ssize_t>(n));
   for (size_t i = 0; i < n; ++i) {
-    queueIdQueue_.addWithPriority(0, Priority::LO_PRI);
+    queueIdQueue_->addWithPriority(0, Priority::LO_PRI);
   }
 }
 
@@ -185,35 +191,32 @@ void detail::DispatchQueueExecutor::stopAndJoinAllThreads(bool isJoin) {
   joinStoppedThreads(n);
 }
 
-std::optional<detail::DispatchTask> detail::DispatchQueueExecutor::takeNextTask(
-    size_t& queueId) {
-  // last queue is a serial queue.
-  if (queueId) {
-    if (auto ka = getQueueToken(queueId)) {
+std::pair<detail::QueueKA, detail::DispatchTask>
+detail::DispatchQueueExecutor::takeNextTask(size_t& lastId) {
+  // last queue is a serial queue. take task from it.
+  if (lastId) {
+    if (auto ka = getQueueToken(lastId)) {
       if (auto task = ka->tryTake()) {
-        return task;
+        return {ka, *task};
       }
     }
-    queueId = 0;
+    // if our take fails, reset it
+    lastId = 0;
   }
 
   while (true) {
-    auto id = queueIdQueue_.tryTake(threadTimeout_);
+    auto id = queueIdQueue_->tryTake(threadTimeout_);
+    // if id equals to 0, means this thread has to stop.
     if (!id || *id == 0) {
-      return std::nullopt;
+      return {nullptr, nullptr};
     }
 
     if (auto ka = getQueueToken(*id)) {
       if (auto task = ka->tryTake()) {
-        if (ka->isSerial()) {
-          // we attach this serial queue to the thread
-          // we should mark the queue id if the queue is serial
-          // so that we can take task form the serial queue next time
-          queueId = *id;
-        } else {
-          queueId = 0;
+        if (ka->isSerial() && !task->isSyncTask()) {
+          lastId = *id;
         }
-        return task;
+        return {ka, *task};
       }
     }
   }
@@ -229,13 +232,13 @@ bool detail::DispatchQueueExecutor::tryDecrToStop() {
   return true;
 }
 
-bool detail::DispatchQueueExecutor::tryThreadTimeout() {
+bool detail::DispatchQueueExecutor::tryTimeoutThread() {
   if (!minActive()) {
     return false;
   }
   activeThreads_.fetch_sub(1, std::memory_order_relaxed);
 
-  std::atomic_signal_fence(std::memory_order_seq_cst);
+  std::atomic_thread_fence(std::memory_order_seq_cst);
 
   if (getQueueSize() > 0) {
     activeThreads_.fetch_add(1, std::memory_order_relaxed);
@@ -246,47 +249,43 @@ bool detail::DispatchQueueExecutor::tryThreadTimeout() {
 }
 
 // threadListLock_ acquire
-bool detail::DispatchQueueExecutor::threadShouldStop(
-    const std::optional<detail::DispatchTask>& task) {
+bool detail::DispatchQueueExecutor::threadShouldStop() {
   if (tryDecrToStop()) {
     return true;
   }
-  if (task) {
-    return false;
-  }
-  return tryThreadTimeout();
+  return tryTimeoutThread();
 }
 
 void detail::DispatchQueueExecutor::threadRun(ThreadPtr thread) {
-  size_t queueId = 0;
+  // if last queue is a serial queue. we record its id.
+  size_t lastId{0};
   thread->startUpSem.release();
 
   while (true) {
-    auto task = takeNextTask(queueId);
+    auto [ka, task] = takeNextTask(lastId);
 
-    if (!task || task->isPoison()) {
-      std::unique_lock w{threadListLock_};
-      if (threadShouldStop(task)) {
+    if (!ka) {
+      std::lock_guard w{threadListLock_};
+      if (threadShouldStop()) {
         threadList_.erase(thread);
-        stoppedThreadQueue_.blockingWrite(thread);
+        stoppedThreadQueue_.emplace(std::move(thread));
         return;
       }
-      queueId = 0;
       continue;
     }
 
-    if (task->isSyncTask()) {
-      task->notifySync();
-      queueId = 0;
+    if (task.isSyncTask()) {
+      task.notifySync();
+      // no need to keep alive.
     } else {
-      task->perform();
+      task.performWithQueue(std::move(ka));
     }
 
     if (threadsToStop_.load(std::memory_order_relaxed) > 0 && !isJoin_) {
-      std::unique_lock w{threadListLock_};
+      std::lock_guard w{threadListLock_};
       if (tryDecrToStop()) {
         threadList_.erase(thread);
-        stoppedThreadQueue_.blockingWrite(thread);
+        stoppedThreadQueue_.emplace(std::move(thread));
         return;
       }
     }
