@@ -4,11 +4,9 @@
 
 #pragma once
 
-#include <any>
 #include <atomic>
 #include <chrono>
 #include <stdexcept>
-#include <typeindex>
 #include <variant>
 
 #include "DispatchKeepAlive.h"
@@ -31,95 +29,16 @@ struct DispatchWorkState {
   std::atomic<bool> waited_{false};
 };
 
-struct return_void_t {};
-
-class DispatchNotify {
+class DispatchWorkItemBase : public DispatchKeepAlive {
  public:
-  enum class NotifyState { none, notifying, func, workItem };
+  virtual ~DispatchWorkItemBase() = default;
 
-  DispatchNotify() noexcept = default;
-
-  DispatchNotify(const DispatchNotify& other) = delete;
-  DispatchNotify(DispatchNotify&& other) = delete;
-
-  DispatchNotify& operator=(const DispatchNotify& other) = delete;
-  DispatchNotify& operator=(DispatchNotify&& other) = delete;
-
-  void notify(DispatchQueue* qptr, DispatchWorkItem& work);
-
-  void notify(DispatchQueue* qptr, Func<void> callback) {
-    checkAndSetNotify();
-    next_ = [callback = std::move(callback)](std::any res) { callback(); };
-    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
-    state_.store(NotifyState::func, std::memory_order_release);
-  }
-
-  template <typename T>
-  void notify(DispatchQueue* qptr, Callback<T> callback) {
-    checkAndSetNotify();
-    next_ = [callback = std::move(callback)](std::any res) {
-      callback(std::any_cast<T>(res));
-    };
-    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
-    state_.store(NotifyState::func, std::memory_order_release);
-  }
-
-  void doNotify(std::any res) noexcept;
-
- private:
-  void checkAndSetNotify() {
-    auto e = NotifyState::none;
-    if (!state_.compare_exchange_strong(
-            e, NotifyState::notifying, std::memory_order_acq_rel)) {
-      throw std::runtime_error("can't notify twice");
-    }
-  }
-
-  std::variant<Callback<std::any>, DispatchKeepAlive::KeepAlive<>> next_{};
-  DispatchKeepAlive::KeepAlive<> queueKA_{};
-  std::atomic<NotifyState> state_{NotifyState::none};
-};
-} // namespace detail
-// namespace detail
-
-class DispatchWorkItem : public detail::DispatchKeepAlive {
- public:
-  template <typename F, typename R = std::invoke_result_t<F>>
-    requires std::is_void_v<R>
-  explicit DispatchWorkItem(F func) noexcept
-      : returnType_(typeid(detail::return_void_t)) {
-    func_ = [func = std::move(func)]() -> std::any {
-      func();
-      return detail::return_void_t{};
-    };
-  }
-
-  // Because when implementing the notify callback mechanism, I use any.
-  // 'Any' needs type R to support value copy and reference copy. Also, any can only
-  // be used to represent value types, and for simplicity, reference returns
-  // are prohibited here
-  template <typename F, typename R = std::invoke_result_t<F>>
-    requires(
-        !std::is_void_v<R> && std::is_nothrow_copy_constructible_v<R> &&
-        std::is_nothrow_move_constructible_v<R> && !std::is_reference_v<R>)
-  explicit DispatchWorkItem(F func) noexcept : returnType_(typeid(R)) {
-    func_ = [func = std::move(func)]() -> std::any { return func(); };
-  }
-
-  DispatchWorkItem(const DispatchWorkItem&) = delete;
-  DispatchWorkItem(DispatchWorkItem&& w) = delete;
-
-  DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
-  DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
-
-  ~DispatchWorkItem() { joinKeepAliveOnce(); }
-
-  void wait() {
+  void wait() noexcept {
     checkAndSetWait();
     state_.isFinished_.wait(false);
   }
 
-  bool tryWait(std::chrono::milliseconds timeout) {
+  bool tryWait(std::chrono::milliseconds timeout) noexcept {
     checkAndSetWait();
     auto deadline = now() + timeout;
     while (now() < deadline) {
@@ -131,29 +50,6 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
     return false;
   }
 
-  void notify(DispatchQueue& q, Func<void> callback) {
-    if (returnType_ != typeid(detail::return_void_t)) {
-      throw std::invalid_argument("return type mismatch");
-    }
-    nextWork_.notify(&q, std::move(callback));
-  }
-
-  template <typename T>
-  requires (!std::is_reference_v<T>)
-  void notify(DispatchQueue& q, Callback<T> callback) {
-    if (returnType_ != typeid(T)) {
-      throw std::invalid_argument("return type mismatch");
-    }
-    nextWork_.notify<T>(&q, std::move(callback));
-  }
-
-  void notify(DispatchQueue& q, DispatchWorkItem& work) {
-    if (returnType_ != typeid(detail::return_void_t)) {
-      throw std::invalid_argument("return type mismatch");
-    }
-    nextWork_.notify(&q, work);
-  }
-
   void cancel() noexcept {
     state_.canceled_.store(true, std::memory_order_relaxed);
   }
@@ -162,41 +58,11 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
     return state_.canceled_.load(std::memory_order_relaxed);
   }
 
-  void perform() {
-    checkAndSetCount();
-    if (!isCanceled()) {
-      try {
-        finish(func_());
-      } catch (const std::exception& ex) {
-        std::cerr << "Task exception: " << ex.what() << " Cancel do notify"
-                  << std::endl;
-        exceptionFinish();
-      } catch (...) {
-        std::cerr << "Task exception: unknown error." << " Cancel do notify"
-                  << std::endl;
-        exceptionFinish();
-      }
-    }
-  }
+  virtual void perform() = 0;
 
- private:
-  void finish(std::any res) noexcept {
-    if (!state_.isFinished_.load(std::memory_order_acquire)) {
-      state_.isFinished_.store(true, std::memory_order_release);
-      state_.isFinished_.notify_one();
-    }
-    // do notify when finish
-    nextWork_.doNotify(std::move(res));
-  }
+  virtual void performWithQueue(detail::QueueKA) = 0;
 
-  // invoke it when func perform fails. cancel do notify
-  void exceptionFinish() noexcept {
-    if (!state_.isFinished_.load(std::memory_order_acquire)) {
-      state_.isFinished_.store(true, std::memory_order_release);
-      state_.isFinished_.notify_one();
-    }
-  }
-
+ protected:
   void checkAndSetWait() {
     bool wait = false;
     if (!state_.waited_.compare_exchange_strong(
@@ -212,13 +78,263 @@ class DispatchWorkItem : public detail::DispatchKeepAlive {
     if (state_.count_.fetch_add(1, std::memory_order_acq_rel) > 0) {
       if (state_.waited_.load(std::memory_order_acquire)) {
         throw std::runtime_error(
-            "The task is only executed once while waiting");
+            "This work item is only executed once while waiting");
       }
     }
   }
 
-  Func<std::any> func_{};
-  detail::DispatchNotify nextWork_{};
-  detail::DispatchWorkState state_{};
-  const std::type_index returnType_;
+  DispatchWorkState state_{};
+};
+
+using WorkItemKA = DispatchKeepAlive::KeepAlive<DispatchWorkItemBase>;
+
+enum class NotifyState { none, notifying, notified };
+
+template <typename T>
+class DispatchNotify {
+ public:
+  DispatchNotify() noexcept = default;
+
+  DispatchNotify(const DispatchNotify& other) = delete;
+  DispatchNotify(DispatchNotify&& other) = delete;
+
+  DispatchNotify& operator=(const DispatchNotify& other) = delete;
+  DispatchNotify& operator=(DispatchNotify&& other) = delete;
+
+  void notify(DispatchQueue* qptr, Callback<T> callback) {
+    checkAndSetNotify();
+    next_ = std::move(callback);
+    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    state_.store(NotifyState::notified, std::memory_order_release);
+  }
+
+  void doNotify(T res) noexcept {
+    auto e = NotifyState::notified;
+    if (state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      auto queueKA = std::move(queueKA_);
+      queueKA->async(std::bind(std::move(next_), std::move(res)));
+    } else {
+      return;
+    }
+    state_.store(NotifyState::none, std::memory_order_release);
+  }
+
+ private:
+  void checkAndSetNotify() {
+    auto e = NotifyState::none;
+    if (!state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      throw std::runtime_error("can't notify twice");
+    }
+  }
+
+  Callback<T> next_{};
+  QueueKA queueKA_{};
+  std::atomic<NotifyState> state_{NotifyState::none};
+};
+
+template <>
+class DispatchNotify<void> {
+ public:
+  DispatchNotify() noexcept = default;
+
+  DispatchNotify(const DispatchNotify& other) = delete;
+  DispatchNotify(DispatchNotify&& other) = delete;
+
+  DispatchNotify& operator=(const DispatchNotify& other) = delete;
+  DispatchNotify& operator=(DispatchNotify&& other) = delete;
+
+  void notify(DispatchQueue* qptr, DispatchWorkItemBase* wptr) {
+    checkAndSetNotify();
+    next_ = DispatchKeepAlive::getKeepAliveToken(wptr);
+    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    state_.store(NotifyState::notified, std::memory_order_release);
+  }
+
+  void notify(DispatchQueue* qptr, Func<void> callback) {
+    checkAndSetNotify();
+    next_ = std::move(callback);
+    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    state_.store(NotifyState::notified, std::memory_order_release);
+  }
+
+  void doNotify() noexcept {
+    auto e = NotifyState::notified;
+    if (state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      auto queueKA = std::move(queueKA_);
+      if (std::holds_alternative<Func<void>>(next_)) {
+        auto func = std::move(std::get<Func<void>>(next_));
+        queueKA->async(std::move(func));
+      } else {
+        auto work = std::move(std::get<WorkItemKA>(next_));
+        queueKA->asyncImpl(work.get());
+      }
+    } else {
+      return;
+    }
+    state_.store(NotifyState::none, std::memory_order_release);
+  }
+
+ private:
+  void checkAndSetNotify() {
+    auto e = NotifyState::none;
+    if (!state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      throw std::runtime_error("can't notify twice");
+    }
+  }
+
+  std::variant<Func<void>, WorkItemKA> next_{};
+  QueueKA queueKA_{};
+  std::atomic<NotifyState> state_{NotifyState::none};
+};
+}; // namespace detail
+
+template <typename T>
+  requires(
+      (std::is_copy_constructible_v<T> && std::is_move_constructible_v<T>) ||
+      std::is_void_v<T>)
+class DispatchWorkItem : public detail::DispatchWorkItemBase {
+ public:
+  template <typename F, typename R = std::invoke_result_t<F>>
+    requires std::is_same_v<T, R>
+  explicit DispatchWorkItem(F func) noexcept : func_(std::move(func)) {}
+
+  DispatchWorkItem(const DispatchWorkItem&) = delete;
+  DispatchWorkItem(DispatchWorkItem&& w) = delete;
+
+  DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
+  DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
+
+  ~DispatchWorkItem() override { joinKeepAliveOnce(); }
+
+  void notify(DispatchQueue& q, Callback<T> callback) {
+    nextWork_.notify(&q, std::move(callback));
+  }
+
+  void perform() override {
+    checkAndSetCount();
+    std::optional<T> res;
+    if (!isCanceled()) {
+      try {
+        res.emplace(func_());
+      } catch (const std::exception& ex) {
+        std::cerr << "WorkItem: " << ex.what() << ". Cancel do notify"
+                  << std::endl;
+      } catch (...) {
+        std::cerr << "WorkItem: unknown error." << ". Cancel do notify"
+                  << std::endl;
+      }
+    }
+    finish(res);
+  }
+
+  void performWithQueue(detail::QueueKA ka) override {
+    checkAndSetCount();
+    std::optional<T> res;
+    if (!isCanceled()) {
+      try {
+        res.emplace(func_());
+      } catch (const std::exception& ex) {
+        std::cerr << "WorkItem exception in queue " << ka->getLabel() << ": "
+                  << ex.what() << ". Cancel do notify" << std::endl;
+      } catch (...) {
+        std::cerr << "WorkItem: unknown error in queue " << ka->getLabel()
+                  << ". Cancel do notify" << std::endl;
+      }
+    }
+    finish(std::move(res));
+  }
+
+ private:
+  void finish(std::optional<T> res) noexcept {
+    if (!state_.isFinished_.load(std::memory_order_acquire)) {
+      state_.isFinished_.store(true, std::memory_order_release);
+      state_.isFinished_.notify_one();
+    }
+    // do notify when finish
+    if (res) {
+      nextWork_.doNotify(std::move(*res));
+    }
+  }
+
+  Func<T> func_{};
+  detail::DispatchNotify<T> nextWork_{};
+};
+
+template <>
+class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
+ public:
+  template <typename F, typename R = std::invoke_result_t<F>>
+    requires std::is_void_v<R>
+  explicit DispatchWorkItem(F func) noexcept : func_(std::move(func)) {}
+
+  DispatchWorkItem(const DispatchWorkItem&) = delete;
+  DispatchWorkItem(DispatchWorkItem&& w) = delete;
+
+  DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
+  DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
+
+  ~DispatchWorkItem() override { joinKeepAliveOnce(); }
+
+  void notify(DispatchQueue& q, Func<void> callback) {
+    nextWork_.notify(&q, std::move(callback));
+  }
+
+  void notify(DispatchQueue& q, DispatchWorkItem& work) {
+    nextWork_.notify(&q, &work);
+  }
+
+  void perform() override {
+    checkAndSetCount();
+    bool success = false;
+    if (!isCanceled()) {
+      try {
+        func_();
+        success = true;
+      } catch (const std::exception& ex) {
+        std::cerr << "WorkItem: " << ex.what() << ". Cancel do notify"
+                  << std::endl;
+      } catch (...) {
+        std::cerr << "WorkItem: unknown error." << ". Cancel do notify"
+                  << std::endl;
+      }
+    }
+    finish(success);
+  }
+
+  void performWithQueue(detail::QueueKA ka) override {
+    checkAndSetCount();
+    bool success = false;
+    if (!isCanceled()) {
+      try {
+        func_();
+        success = true;
+      } catch (const std::exception& ex) {
+        std::cerr << "WorkItem exception in queue " << ka->getLabel() << ": "
+                  << ex.what() << ". Cancel do notify" << std::endl;
+      } catch (...) {
+        std::cerr << "WorkItem: unknown error in queue " << ka->getLabel()
+                  << ". Cancel do notify" << std::endl;
+      }
+    }
+    finish(success);
+  }
+
+ private:
+  void finish(bool success) noexcept {
+    if (!state_.isFinished_.load(std::memory_order_acquire)) {
+      state_.isFinished_.store(true, std::memory_order_release);
+      state_.isFinished_.notify_one();
+    }
+    // do notify when finish
+    if (success) {
+      nextWork_.doNotify();
+    }
+  }
+
+  Func<void> func_{};
+  detail::DispatchNotify<void> nextWork_{};
 };
