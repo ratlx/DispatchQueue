@@ -17,9 +17,9 @@ class DispatchGroup : public detail::DispatchKeepAlive {
   DispatchGroup() noexcept = default;
 
   DispatchGroup(const DispatchGroup&) = delete;
-  DispatchGroup& operator=(const DispatchGroup&) = delete;
-
   DispatchGroup(DispatchGroup&&) = delete;
+
+  DispatchGroup& operator=(const DispatchGroup&) = delete;
   DispatchGroup& operator=(DispatchGroup&&) = delete;
 
   ~DispatchGroup() { joinKeepAliveOnce(); }
@@ -57,19 +57,19 @@ class DispatchGroup : public detail::DispatchKeepAlive {
       notifyCount_.store(mayNotify, std::memory_order_release);
       taskCount_.notify_all();
 
-      nextWork_.doNotify(detail::return_void_t{});
+      nextWork_.doNotify();
     }
   }
 
   void notify(DispatchQueue& q, Func<void> func) {
     nextWork_.notify(&q, std::move(func));
     if (taskCount_.load(std::memory_order_acquire) == 0) {
-      nextWork_.doNotify(detail::return_void_t{});
+      nextWork_.doNotify();
     }
   }
 
-  void notify(DispatchQueue& q, DispatchWorkItem& work) {
-    nextWork_.notify(&q, work);
+  void notify(DispatchQueue& q, DispatchWorkItem<void>& work) {
+    nextWork_.notify(&q, &work);
   }
 
  private:
@@ -77,5 +77,9 @@ class DispatchGroup : public detail::DispatchKeepAlive {
   std::atomic<uint32_t> waitCount_{0};
   std::atomic<uint32_t> notifyCount_{0};
 
-  detail::DispatchNotify nextWork_{};
+  detail::DispatchNotify<void> nextWork_{};
 };
+
+namespace detail {
+using GroupKA = DispatchKeepAlive::KeepAlive<DispatchGroup>;
+}
