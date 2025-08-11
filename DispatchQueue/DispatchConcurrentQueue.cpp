@@ -9,8 +9,6 @@
 #include "DispatchQueueExecutor.h"
 #include "DispatchTask.h"
 
-constexpr static size_t kDefaultTaskQueueSize = 1000000;
-
 DispatchConcurrentQueue::DispatchConcurrentQueue(
     std::string label, int8_t priority, bool isActive)
     : DispatchQueue(
@@ -71,14 +69,13 @@ void DispatchConcurrentQueue::suspend() {
 void DispatchConcurrentQueue::resume() {
   size_t n = 0;
   if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-    std::unique_lock l{taskLock_};
     suspend_.store(false, std::memory_order_release);
+    // wake up all the sync task
+    suspend_.notify_all();
+
+    std::unique_lock l{taskLock_};
     if (!inactive_.load(std::memory_order_acquire)) {
       n = taskToAdd_.exchange(0, std::memory_order_relaxed);
-
-      l.unlock();
-      // wake up all the sync task
-      suspend_.notify_all();
     }
   }
   for (int i = 0; i < n; ++i) {
@@ -101,10 +98,14 @@ std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
 }
 
 bool DispatchConcurrentQueue::suspendCheck() {
-  std::shared_lock l{taskLock_};
   if (suspend_.load(std::memory_order_acquire)) {
-    taskToAdd_.fetch_add(1, std::memory_order_relaxed);
-    return true;
+    std::shared_lock l{taskLock_};
+
+    // after lock acquire, double check.
+    if (suspend_.load(std::memory_order_acquire)) {
+      taskToAdd_.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    }
   }
   return false;
 }

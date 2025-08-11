@@ -18,6 +18,8 @@
 #include "Utility.h"
 
 class DispatchConcurrentQueue : public DispatchQueue {
+  constexpr static size_t kDefaultTaskQueueSize = 100000000;
+
  public:
   explicit DispatchConcurrentQueue(
       std::string label,
@@ -69,8 +71,11 @@ class DispatchConcurrentQueue : public DispatchQueue {
   template <typename... Args>
   void addTask(Args&&... args) {
     taskQueue_.blockingWrite(std::forward<Args>(args)...);
-    {
+    if (inactive_.load(std::memory_order_acquire) ||
+          suspend_.load(std::memory_order_acquire)) {
       std::shared_lock l{taskLock_};
+
+      // after lock acquire, double check.
       if (inactive_.load(std::memory_order_acquire) ||
           suspend_.load(std::memory_order_acquire)) {
         taskToAdd_.fetch_add(1, std::memory_order_relaxed);
@@ -89,5 +94,5 @@ class DispatchConcurrentQueue : public DispatchQueue {
   std::atomic<size_t> taskToAdd_;
   std::atomic<bool> suspend_{false};
 
-  DispatchKeepAlive::KeepAlive<detail::DispatchQueueExecutor> executor_{};
+  detail::ExecutorKA executor_{};
 };
