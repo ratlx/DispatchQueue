@@ -2,11 +2,11 @@
 // Created by 小火锅 on 25-7-18.
 //
 
+#include <chrono>
+#include <mutex>
 #include <thread>
 #include <unordered_set>
 #include <gtest/gtest.h>
-#include <mutex>
-#include <chrono>
 
 #include <DispatchQueue/DispatchConcurrentQueue.h>
 #include <DispatchQueue/DispatchGroup.h>
@@ -20,16 +20,16 @@ TEST(ConcurrentTest, Thread) {
   unordered_set<thread::id> set;
   mutex lock;
   for (int i = 0; i < 2 * n; ++i) {
-    cq.async([&] {
-      auto cur = this_thread::get_id();
-      cq.sync([&] {
-        EXPECT_EQ(cur, this_thread::get_id());
-      });
+    cq.async(
+        [&] {
+          auto cur = this_thread::get_id();
+          cq.sync([&] { EXPECT_EQ(cur, this_thread::get_id()); });
 
-      this_thread::sleep_for(chrono::milliseconds(10));
-      lock_guard l{lock};
-      set.insert(cur);
-    }, g);
+          this_thread::sleep_for(chrono::milliseconds(10));
+          lock_guard l{lock};
+          set.insert(cur);
+        },
+        g);
   }
   g.wait();
   EXPECT_EQ(set.size(), n);
@@ -46,24 +46,33 @@ TEST(ConcurrentTest, Prioriy) {
   auto t = now();
 
   for (int i = 0; i < n; ++i) {
-    q3.async([&] {
-      this_thread::sleep_for(chrono::milliseconds(1));
-      if (cnt3.fetch_add(1) == n-1) {
-        cout << "Low priority finished in " << chrono::duration<double>(now() - t).count() << "s\n";
-      }
-    }, g);
-    q2.async([&] {
-      this_thread::sleep_for(chrono::milliseconds(1));
-      if (cnt2.fetch_add(1) == n-1) {
-        cout << "Middle priority finished in " << chrono::duration<double>(now() - t).count() << "s\n";
-      }
-    }, g);
-    q1.async([&] {
-      this_thread::sleep_for(chrono::milliseconds(1));
-      if (cnt1.fetch_add(1) == n-1) {
-        cout << "High priority finished in " << chrono::duration<double>(now() - t).count() << "s\n";
-      }
-    }, g);
+    q3.async(
+        [&] {
+          this_thread::sleep_for(chrono::milliseconds(1));
+          if (cnt3.fetch_add(1) == n - 1) {
+            cout << "Low priority finished in "
+                 << chrono::duration<double>(now() - t).count() << "s\n";
+          }
+        },
+        g);
+    q2.async(
+        [&] {
+          this_thread::sleep_for(chrono::milliseconds(1));
+          if (cnt2.fetch_add(1) == n - 1) {
+            cout << "Middle priority finished in "
+                 << chrono::duration<double>(now() - t).count() << "s\n";
+          }
+        },
+        g);
+    q1.async(
+        [&] {
+          this_thread::sleep_for(chrono::milliseconds(1));
+          if (cnt1.fetch_add(1) == n - 1) {
+            cout << "High priority finished in "
+                 << chrono::duration<double>(now() - t).count() << "s\n";
+          }
+        },
+        g);
   }
   g.wait();
 }
@@ -71,8 +80,7 @@ TEST(ConcurrentTest, Prioriy) {
 TEST(ConcurrentTest, Activate) {
   auto q1 = DispatchConcurrentQueue("q1", Priority::HI_PRI, false);
   auto g = DispatchGroup();
-  q1.async([&] {
-  }, g);
+  q1.async([&] {}, g);
   EXPECT_FALSE(g.tryWait(chrono::milliseconds(10)));
   q1.activate();
   EXPECT_TRUE(g.tryWait(chrono::milliseconds(10)));
@@ -90,9 +98,7 @@ TEST(ConcurrentTest, MultiProducers) {
   for (int i = 0; i < m; ++i) {
     vec.emplace_back([&] {
       for (int j = 0; j < n; ++j) {
-        cq.async([&] {
-          ++cnt;
-        }, cg);
+        cq.async([&] { ++cnt; }, cg);
       }
     });
   }
@@ -112,17 +118,19 @@ TEST(ConcurrentTest, Suspend) {
   const int n = thread::hardware_concurrency() * 2;
   binary_semaphore sem1{0};
 
-  thread t {[&] {
+  thread t{[&] {
     sem1.acquire();
     cq.suspend();
   }};
   for (int i = 0; i < n; ++i) {
-    cq.async([&] {
-      if (cnt.fetch_add(1) == n / 2) {
-        sem1.release();
-      }
-      this_thread::sleep_for(chrono::milliseconds(10));
-    }, cg);
+    cq.async(
+        [&] {
+          if (cnt.fetch_add(1) == n / 2) {
+            sem1.release();
+          }
+          this_thread::sleep_for(chrono::milliseconds(10));
+        },
+        cg);
   }
   t.join();
   EXPECT_GE(cnt, n / 2 + 1);
@@ -138,30 +146,22 @@ struct NoCopyOrMoveType {
   NoCopyOrMoveType(NoCopyOrMoveType&&) noexcept = default;
 };
 
-struct MoveOnlyType {
-  MoveOnlyType() = default;
-  MoveOnlyType(const MoveOnlyType&) noexcept = delete;
-  MoveOnlyType(MoveOnlyType&&) noexcept = default;
-};
-
 TEST(ConcurrentTest, Return) {
   auto cq = DispatchConcurrentQueue("cq", 0, true);
-  EXPECT_EQ(cq.sync<int>([] {
-    this_thread::sleep_for(chrono::milliseconds(10));
-    return 0;
-  }).value(), 0);
+  EXPECT_EQ(
+      cq.sync<int>([] {
+          this_thread::sleep_for(chrono::milliseconds(10));
+          return 0;
+        }).value(),
+      0);
 
-  cq.sync<NoCopyOrMoveType>([] {
-    return NoCopyOrMoveType{};
-  });
+  cq.sync<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
 
   auto ft1 = cq.async<string>([] {
     this_thread::sleep_for(chrono::milliseconds(10));
     return "Who are you on the bed?";
   });
-  auto ft2 = cq.async<MoveOnlyType>([] {
-    return MoveOnlyType{};
-  });
+  auto ft2 = cq.async<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
 
   ft2.get();
   ft1.wait();

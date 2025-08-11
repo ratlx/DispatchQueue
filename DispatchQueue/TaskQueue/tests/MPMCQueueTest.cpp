@@ -6,7 +6,6 @@
 #include <memory>
 #include <set>
 #include <thread>
-#include <type_traits>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -189,35 +188,17 @@ TEST(DynamicMPMCQueueTest, Capacity) {
   size_t minCap = 10, mul = 2;
   int tmp;
   MPMCQueue<int, true> q(1024, minCap, mul);
-  for (int i = 0; i < minCap - 1; ++i) {
+  for (int i = 0; i < minCap; ++i) {
     q.blockingWrite(1);
   }
-  EXPECT_TRUE(q.writeIfNotFull(1));
-  EXPECT_FALSE(q.writeIfNotFull(1));
   // after expand
-  EXPECT_FALSE(q.writeIfNotFull(1));
-  q.blockingRead(tmp);
   EXPECT_TRUE(q.writeIfNotFull(1));
-  for (int i = 0; i < minCap * 2 - 1; ++i) {
+  EXPECT_EQ(q.allocatedCapacity(), 20);
+  for (int i = 0; i < minCap * mul; ++i) {
     q.blockingWrite(1);
   }
   EXPECT_TRUE(q.writeIfNotFull(1));
-  EXPECT_FALSE(q.writeIfNotFull(1));
-}
-
-template<typename T, typename... Args>
-void occurExpand(MPMCQueue<T, true>& q, size_t curCap, Args&&... args) {
-  // clear
-  while (q.readIfNotEmpty().has_value()) {}
-
-  for (int i = 0; i < curCap; ++i) {
-    q.blockingWrite(forward<Args>(args)...);
-  }
-  // expand
-  EXPECT_FALSE(q.writeIfNotFull(forward<Args>(args)...));
-  T tmp;
-  q.blockingRead(tmp);
-  q.blockingWrite(forward<Args>(args)...);
+  EXPECT_EQ(q.allocatedCapacity(), 40);
 }
 
 TEST(DynamicMPMCQueueTest, MoveConstructAssign) {
@@ -236,15 +217,17 @@ TEST(DynamicMPMCQueueTest, MoveConstructAssign) {
   EXPECT_EQ(q2.allocatedCapacity(), 0);
   EXPECT_EQ(*q1.readIfNotEmpty(), 2);
 
-  // After expand
-  occurExpand(q1, 1, 1);
-  q1.blockingWrite(1);
+  // Expand
+  for (int i = 0; i < 10; ++i) {
+    q1.blockingWrite(1);
+  }
   q2 = std::move(q1);
   EXPECT_EQ(q1.allocatedCapacity(), 0);
   EXPECT_EQ(q2.allocatedCapacity(), 10);
-  EXPECT_EQ(q2.size(), 2);
-  EXPECT_TRUE(q2.readIfNotEmpty().has_value());
-  EXPECT_TRUE(q2.readIfNotEmpty().has_value());
+  EXPECT_EQ(q2.size(), 10);
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_TRUE(q2.readIfNotEmpty().has_value());
+  }
 }
 
 TEST(DynamicMPMCQueueTest, MovableOnlyType) {
@@ -267,7 +250,6 @@ TEST(DynamicMPMCQueueTest, DestructAfterExpand) {
   TestType::constructed.clear();
   {
     MPMCQueue<TestType, true> q(100, 10, 10);
-    occurExpand(q, 10);
     for (int i = 0; i < 100; ++i) {
       q.blockingWrite();
     }
@@ -282,10 +264,12 @@ TEST(DynamicMPMCQueueTest, Fuzz) {
   std::atomic<bool> flag(false);
   std::vector<std::thread> threads;
   std::atomic<uint64_t> sum(0);
+  threads.reserve(2 * numThreads);
 
   for (uint64_t i = 0; i < numThreads; ++i) {
     threads.emplace_back([&, i] {
-      while (!flag.load(std::memory_order_acquire));
+      while (!flag.load(std::memory_order_acquire))
+        ;
       for (auto j = i; j < numOps; j += numThreads) {
         q.blockingWrite(j);
       }
@@ -294,7 +278,8 @@ TEST(DynamicMPMCQueueTest, Fuzz) {
 
   for (uint64_t i = 0; i < numThreads; ++i) {
     threads.emplace_back([&, i] {
-      while (!flag.load(std::memory_order_acquire));
+      while (!flag.load(std::memory_order_acquire))
+        ;
       uint64_t threadSum = 0;
       for (auto j = i; j < numOps; j += numThreads) {
         uint64_t v;

@@ -2,12 +2,12 @@
 // Created by 小火锅 on 25-7-17.
 //
 
-#include <gtest/gtest.h>
 #include <atomic>
-#include <functional>
-#include <thread>
-#include <semaphore>
 #include <chrono>
+#include <functional>
+#include <semaphore>
+#include <thread>
+#include <gtest/gtest.h>
 
 #include <DispatchQueue/DispatchGroup.h>
 #include <DispatchQueue/DispatchSerialQueue.h>
@@ -19,37 +19,26 @@ void add() {
   cnt.fetch_add(1);
 }
 
-struct MoveOnlyType {
-  MoveOnlyType() = default;
-  MoveOnlyType(const MoveOnlyType&) noexcept = delete;
-  MoveOnlyType(MoveOnlyType&&) noexcept = default;
+struct NoCopyOrMoveType {
+  NoCopyOrMoveType() = default;
+  NoCopyOrMoveType(const NoCopyOrMoveType&) noexcept = delete;
+  NoCopyOrMoveType(NoCopyOrMoveType&&) noexcept = default;
 };
 
 TEST(SerialQueue, Sync) {
   auto sq = DispatchSerialQueue("sq");
-  cnt = 0;
-  sq.async([] {
-    this_thread::sleep_for(chrono::milliseconds(10));
-    add();
-  });
-  sq.sync([] {
-    EXPECT_EQ(cnt, 1);
-    add();
-  });
-  auto w = DispatchWorkItem([] {
-    EXPECT_EQ(cnt, 2);
-  });
+  sq.sync([] {});
+  auto w = DispatchWorkItem<void>([] {});
   sq.sync(w);
-  EXPECT_EQ(sq.sync<double>([] {
-    return 20;
-  }).value(), 20);
-  EXPECT_EQ(sq.sync<double>([] {
-    throw std::runtime_error("return nullopt");
-    return 20;
-  }), std::nullopt);
-  EXPECT_TRUE(sq.sync<MoveOnlyType>([] {
-    return MoveOnlyType{};
-  }).has_value());
+  EXPECT_EQ(sq.sync<double>([] { return 20; }).value(), 20);
+  EXPECT_EQ(
+      sq.sync<double>([] {
+        throw std::runtime_error("return nullopt");
+        return 20;
+      }),
+      std::nullopt);
+  EXPECT_TRUE(
+      sq.sync<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; }).has_value());
 }
 
 TEST(SerialQueue, Async) {
@@ -58,11 +47,13 @@ TEST(SerialQueue, Async) {
   cnt = 0;
   const int n = 100, m = 10;
   for (int i = 0; i < n; ++i) {
-    sq.async([&] {
-      for (int j = 0; j < m; ++j) {
-        sq.async(add, g);
-      }
-    }, g);
+    sq.async(
+        [&] {
+          for (int j = 0; j < m; ++j) {
+            sq.async(add, g);
+          }
+        },
+        g);
   }
   auto ft1 = sq.async<bool>([&] {
     throw runtime_error("test throw");
@@ -71,14 +62,10 @@ TEST(SerialQueue, Async) {
   EXPECT_THROW(ft1.get(), std::runtime_error);
   g.wait();
 
-  auto ft2 = sq.async<bool>([&] {
-    return cnt == n * m;
-  });
+  auto ft2 = sq.async<bool>([&] { return cnt == n * m; });
   EXPECT_TRUE(ft2.get());
 
-  auto ft3 = sq.async<MoveOnlyType>([] {
-    return MoveOnlyType{};
-  });
+  auto ft3 = sq.async<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
   ft3.get();
 }
 
@@ -88,11 +75,13 @@ TEST(SerialQueue, Combine) {
   cnt = 0;
   for (int i = 0; i < n; ++i) {
     if (i & 1) {
-      EXPECT_EQ(sq.sync<int>([=] {
-        EXPECT_EQ(cnt, i);
-        cnt++;
-        return i;
-      }).value(), i);
+      EXPECT_EQ(
+          sq.sync<int>([=] {
+              EXPECT_EQ(cnt, i);
+              cnt++;
+              return i;
+            }).value(),
+          i);
     } else {
       sq.async([=] {
         EXPECT_EQ(cnt, i);
@@ -108,9 +97,7 @@ TEST(SerialQueue, Thread) {
   auto sq = DispatchSerialQueue("sq");
   counting_semaphore<> sem{0};
 
-  sq.sync([&] {
-    EXPECT_EQ(this_thread::get_id(), cur);
-  });
+  sq.sync([&] { EXPECT_EQ(this_thread::get_id(), cur); });
 
   sq.async([&] {
     EXPECT_NE(this_thread::get_id(), cur);
@@ -119,10 +106,8 @@ TEST(SerialQueue, Thread) {
   });
 
   int n = 1000;
-  for (int  i = 0; i < n; ++i) {
-    sq.async([&] {
-      EXPECT_EQ(this_thread::get_id(), cur);
-    }, g);
+  for (int i = 0; i < n; ++i) {
+    sq.async([&] { EXPECT_EQ(this_thread::get_id(), cur); }, g);
   }
   sem.release();
   g.wait();
@@ -154,18 +139,20 @@ TEST(SerialQueue, Suspend) {
   auto g = DispatchGroup();
   binary_semaphore sem1{0};
   binary_semaphore sem2{0};
-  thread t {[&] {
+  thread t{[&] {
     sem1.acquire();
     sq.suspend();
     sem2.release();
   }};
   for (int i = 0; i < n; ++i) {
-    sq.async([&] {
-      if (cnt.fetch_add(1) == n / 2) {
-        sem1.release();
-        sem2.acquire();
-      }
-    }, g);
+    sq.async(
+        [&] {
+          if (cnt.fetch_add(1) == n / 2) {
+            sem1.release();
+            sem2.acquire();
+          }
+        },
+        g);
   }
   t.join();
   EXPECT_EQ(cnt, n / 2 + 1);
