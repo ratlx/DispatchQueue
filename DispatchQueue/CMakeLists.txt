@@ -1,5 +1,4 @@
 add_library(DispatchQueue
-        DispatchWorkItem.cpp
         DispatchQueueExecutor.cpp
         DispatchSerialQueue.cpp
         DispatchConcurrentQueue.cpp
