@@ -192,6 +192,8 @@ class DispatchNotify<void> {
 };
 }; // namespace detail
 
+// typename T refers to the return value of the WorkItem, and when there is no
+// return value, T should be void.
 template <typename T>
   requires(
       (std::is_copy_constructible_v<T> && std::is_move_constructible_v<T>) ||
