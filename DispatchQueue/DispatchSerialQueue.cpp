@@ -95,6 +95,10 @@ bool DispatchSerialQueue::suspendCheck() {
 }
 
 void DispatchSerialQueue::notifyNextWork() {
+  if (suspendCheck()) {
+    return;
+  }
+
   std::unique_lock lock{taskQueueLock_};
   if (taskQueue_.empty()) {
     threadAttach_.store(false, std::memory_order_release);
