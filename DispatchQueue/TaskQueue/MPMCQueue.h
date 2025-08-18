@@ -51,7 +51,7 @@ class alignas(hardware_destructive_interference_size) Slot {
 
     struct WaitGuard {
       explicit WaitGuard(std::atomic<size_t>& guarded) : counter(guarded) {
-        counter.fetch_add(1, std::memory_order_release);
+        counter.fetch_add(1, std::memory_order_acq_rel);
       }
       ~WaitGuard() { counter.fetch_sub(1, std::memory_order_release); }
       std::atomic<size_t>& counter;
