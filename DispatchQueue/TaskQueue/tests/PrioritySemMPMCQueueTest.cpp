@@ -108,8 +108,3 @@ TEST(PSMPMCQueue, Concurrent) {
   }
   EXPECT_EQ(q.size(), 0);
 }
-
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

@@ -167,8 +167,3 @@ TEST(ConcurrentTest, Return) {
   ft1.wait();
   EXPECT_EQ(ft1.get(), "Who are you on the bed?");
 }
-
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

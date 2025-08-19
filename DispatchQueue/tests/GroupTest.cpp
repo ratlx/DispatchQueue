@@ -35,8 +35,3 @@ TEST(GroupTest, Notify) {
   EXPECT_TRUE(g.tryWait(chrono::milliseconds(2 * n)));
   sem.acquire();
 }
-
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

@@ -160,8 +160,3 @@ TEST(SerialQueue, Suspend) {
   g.wait();
   EXPECT_EQ(cnt, n);
 }
-
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

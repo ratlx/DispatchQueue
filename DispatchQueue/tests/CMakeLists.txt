@@ -1,11 +1,4 @@
-add_executable(SerialTest SerialTest.cpp)
-add_executable(WorkItemTest WorkItemTest.cpp)
-add_executable(GroupTest GroupTest.cpp)
-add_executable(ConcurrentTest ConcurrentTest.cpp)
+add_executable(DispatchQueueTest SerialTest.cpp ConcurrentTest.cpp GroupTest.cpp WorkItemTest.cpp)
 
-foreach(test IN ITEMS SerialTest WorkItemTest GroupTest ConcurrentTest)
-    target_link_libraries(${test} PRIVATE GTest::gtest DispatchQueue)
-    set_target_properties(${test} PROPERTIES
-            BUILD_RPATH "${GTEST_DIR}"
-    )
-endforeach()
+target_link_libraries(DispatchQueueTest PRIVATE GTest::gtest_main DispatchQueue)
+set_target_properties(DispatchQueueTest PROPERTIES BUILD_RPATH "${GTEST_DIR}")
