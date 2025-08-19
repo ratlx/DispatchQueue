@@ -115,7 +115,7 @@ TEST(ConcurrentTest, Suspend) {
   auto cq = DispatchConcurrentQueue("cq", 0, true);
   auto cg = DispatchGroup();
   atomic<int> cnt{0};
-  const int n = thread::hardware_concurrency() * 2;
+  const int n = 100;
   binary_semaphore sem1{0};
 
   thread t{[&] {
@@ -128,7 +128,7 @@ TEST(ConcurrentTest, Suspend) {
           if (cnt.fetch_add(1) == n / 2) {
             sem1.release();
           }
-          this_thread::sleep_for(50ms);
+          this_thread::sleep_for(10ms);
         },
         cg);
   }
