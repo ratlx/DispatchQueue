@@ -115,7 +115,7 @@ TEST(ConcurrentTest, Suspend) {
   auto cq = DispatchConcurrentQueue("cq", 0, true);
   auto cg = DispatchGroup();
   atomic<int> cnt{0};
-  const int n = 100;
+  const int n = thread::hardware_concurrency() * 10;
   binary_semaphore sem1{0};
 
   thread t{[&] {
