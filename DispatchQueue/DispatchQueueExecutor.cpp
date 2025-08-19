@@ -23,7 +23,8 @@ detail::DispatchQueueExecutor::DispatchQueueExecutor(
     : maxThreads_(numThreads),
       threadTimeout_(threadtimeout),
       queueIdQueue_(
-          std::make_unique<PrioritySemMPMCQueue<size_t, false, QueueBehaviorIfFull::BLOCK>>(
+          std::make_unique<
+              PrioritySemMPMCQueue<size_t, false, QueueBehaviorIfFull::BLOCK>>(
               numPriorities, maxQueueSize)) {}
 
 detail::DispatchQueueExecutor::DispatchQueueExecutor(
@@ -31,7 +32,8 @@ detail::DispatchQueueExecutor::DispatchQueueExecutor(
     : maxThreads_(numThreads),
       threadTimeout_(threadtimeout),
       queueIdQueue_(
-          std::make_unique<PrioritySemMPMCQueue<size_t, true, QueueBehaviorIfFull::BLOCK>>(
+          std::make_unique<
+              PrioritySemMPMCQueue<size_t, true, QueueBehaviorIfFull::BLOCK>>(
               numPriorities, kMaxQueueSize)) {}
 
 detail::DispatchQueueExecutor::~DispatchQueueExecutor() {
@@ -49,7 +51,8 @@ detail::ExecutorKA detail::DispatchQueueExecutor::getGlobalExecutor() {
   static std::once_flag once;
 
   std::call_once(once, [] {
-    globalExecutor.emplace(std::thread::hardware_concurrency(), kDefaultPriority);
+    globalExecutor.emplace(
+        std::thread::hardware_concurrency(), kDefaultPriority);
   });
 
   return getKeepAliveToken(&*globalExecutor);
@@ -71,9 +74,7 @@ void detail::DispatchQueueExecutor::addWithPriority(
   bool mayNeedToAddThreads = minThreads_.load(std::memory_order_relaxed) == 0 ||
       activeThreads_.load(std::memory_order_relaxed) <
           maxThreads_.load(std::memory_order_relaxed);
-  auto ka = mayNeedToAddThreads
-      ? getKeepAliveToken(this)
-      : ExecutorKA();
+  auto ka = mayNeedToAddThreads ? getKeepAliveToken(this) : ExecutorKA();
 
   auto result = queueIdQueue_->addWithPriority(queueId, priority);
 

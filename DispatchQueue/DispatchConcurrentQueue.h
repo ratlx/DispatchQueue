@@ -72,7 +72,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
   void addTask(Args&&... args) {
     taskQueue_.blockingWrite(std::forward<Args>(args)...);
     if (inactive_.load(std::memory_order_acquire) ||
-          suspend_.load(std::memory_order_acquire)) {
+        suspend_.load(std::memory_order_acquire)) {
       std::shared_lock l{taskLock_};
 
       // after lock acquire, double check.
