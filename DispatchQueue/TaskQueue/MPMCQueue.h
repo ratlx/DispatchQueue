@@ -13,14 +13,14 @@
 
 namespace detail {
 #if defined(__cpp_lib_hardware_interference_size)
-using std::hardware_destructive_interference_size;
+constexpr size_t cache_line_size = std::hardware_destructive_interference_size;
 #else
-constexpr size_t hardware_destructive_interference_size = 128;
+constexpr size_t cache_line_size = 128;
 #endif
 
 template <typename T>
   requires(std::is_nothrow_destructible_v<T>)
-class alignas(hardware_destructive_interference_size) Slot {
+class alignas(cache_line_size) Slot {
   static_assert(
       std::is_nothrow_copy_assignable_v<T> ||
       std::is_nothrow_move_assignable_v<T>);
@@ -243,9 +243,9 @@ class MPMCQueue {
   detail::Slot<T>* slots_;
 
   // Align to avoid false sharing between pushTicket_ and popTicket_
-  alignas(detail::hardware_destructive_interference_size)
+  alignas(detail::cache_line_size)
       std::atomic<size_t> pushTicket_;
-  alignas(detail::hardware_destructive_interference_size)
+  alignas(detail::cache_line_size)
       std::atomic<size_t> popTicket_;
 };
 
@@ -591,8 +591,8 @@ class MPMCQueue<T, true> {
 
   ClosedArray* closed_;
 
-  alignas(detail::hardware_destructive_interference_size)
+  alignas(detail::cache_line_size)
       std::atomic<size_t> pushTicket_{0};
-  alignas(detail::hardware_destructive_interference_size)
+  alignas(detail::cache_line_size)
       std::atomic<size_t> popTicket_{0};
 };
