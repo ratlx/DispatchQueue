@@ -25,7 +25,7 @@ TEST(ConcurrentTest, Thread) {
           auto cur = this_thread::get_id();
           cq.sync([&] { EXPECT_EQ(cur, this_thread::get_id()); });
 
-          this_thread::sleep_for(chrono::milliseconds(10));
+          this_thread::sleep_for(10ms);
           lock_guard l{lock};
           set.insert(cur);
         },
@@ -48,7 +48,7 @@ TEST(ConcurrentTest, Prioriy) {
   for (int i = 0; i < n; ++i) {
     q3.async(
         [&] {
-          this_thread::sleep_for(chrono::milliseconds(1));
+          this_thread::sleep_for(1ms);
           if (cnt3.fetch_add(1) == n - 1) {
             cout << "Low priority finished in "
                  << chrono::duration<double>(now() - t).count() << "s\n";
@@ -81,9 +81,9 @@ TEST(ConcurrentTest, Activate) {
   auto q1 = DispatchConcurrentQueue("q1", Priority::HI_PRI, false);
   auto g = DispatchGroup();
   q1.async([&] {}, g);
-  EXPECT_FALSE(g.tryWait(chrono::milliseconds(10)));
+  EXPECT_FALSE(g.tryWait(10ms));
   q1.activate();
-  EXPECT_TRUE(g.tryWait(chrono::milliseconds(10)));
+  EXPECT_TRUE(g.tryWait(100ms));
 }
 
 TEST(ConcurrentTest, MultiProducers) {
@@ -128,7 +128,7 @@ TEST(ConcurrentTest, Suspend) {
           if (cnt.fetch_add(1) == n / 2) {
             sem1.release();
           }
-          this_thread::sleep_for(chrono::milliseconds(10));
+          this_thread::sleep_for(50ms);
         },
         cg);
   }
@@ -150,7 +150,7 @@ TEST(ConcurrentTest, Return) {
   auto cq = DispatchConcurrentQueue("cq", 0, true);
   EXPECT_EQ(
       cq.sync<int>([] {
-          this_thread::sleep_for(chrono::milliseconds(10));
+          this_thread::sleep_for(10ms);
           return 0;
         }).value(),
       0);
@@ -158,7 +158,7 @@ TEST(ConcurrentTest, Return) {
   cq.sync<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
 
   auto ft1 = cq.async<string>([] {
-    this_thread::sleep_for(chrono::milliseconds(10));
+    this_thread::sleep_for(10ms);
     return "Who are you on the bed?";
   });
   auto ft2 = cq.async<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
