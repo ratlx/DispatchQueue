@@ -10,6 +10,7 @@
 #include <new>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace detail {
 #if defined(__cpp_lib_hardware_interference_size)
@@ -243,10 +244,8 @@ class MPMCQueue {
   detail::Slot<T>* slots_;
 
   // Align to avoid false sharing between pushTicket_ and popTicket_
-  alignas(detail::cache_line_size)
-      std::atomic<size_t> pushTicket_;
-  alignas(detail::cache_line_size)
-      std::atomic<size_t> popTicket_;
+  alignas(detail::cache_line_size) std::atomic<size_t> pushTicket_;
+  alignas(detail::cache_line_size) std::atomic<size_t> popTicket_;
 };
 
 template <typename T>
@@ -591,8 +590,6 @@ class MPMCQueue<T, true> {
 
   ClosedArray* closed_;
 
-  alignas(detail::cache_line_size)
-      std::atomic<size_t> pushTicket_{0};
-  alignas(detail::cache_line_size)
-      std::atomic<size_t> popTicket_{0};
+  alignas(detail::cache_line_size) std::atomic<size_t> pushTicket_{0};
+  alignas(detail::cache_line_size) std::atomic<size_t> popTicket_{0};
 };
