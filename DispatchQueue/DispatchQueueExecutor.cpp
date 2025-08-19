@@ -214,7 +214,7 @@ detail::DispatchQueueExecutor::takeNextTask(size_t& lastId) {
 
     if (auto ka = getQueueToken(*id)) {
       if (auto task = ka->tryTake()) {
-        if (ka->isSerial() && !task->isSyncTask()) {
+        if (ka->isSerial()) {
           lastId = *id;
         }
         return {ka, *task};
@@ -278,6 +278,8 @@ void detail::DispatchQueueExecutor::threadRun(ThreadPtr thread) {
     if (task.isSyncTask()) {
       task.notifySync();
       // no need to keep alive.
+      // reset
+      lastId = 0;
     } else {
       task.performWithQueue(std::move(ka));
     }

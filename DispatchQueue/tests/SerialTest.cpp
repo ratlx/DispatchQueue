@@ -72,20 +72,20 @@ TEST(SerialQueue, Async) {
 TEST(SerialQueue, Combine) {
   auto sq = DispatchSerialQueue("sq");
   const int n = 1000;
-  cnt = 0;
+  int s_cnt = 0, t_cnt = 0;
+
   for (int i = 0; i < n; ++i) {
     if (i & 1) {
-      EXPECT_EQ(
-          sq.sync<int>([=] {
-              EXPECT_EQ(cnt, i);
-              cnt++;
-              return i;
-            }).value(),
-          i);
+      sq.sync([&, i = i] {
+        EXPECT_EQ(t_cnt++, 0);
+        EXPECT_EQ(s_cnt++, i);
+        --t_cnt;
+      });
     } else {
-      sq.async([=] {
-        EXPECT_EQ(cnt, i);
-        cnt++;
+      sq.async([&, i = i] {
+        EXPECT_EQ(t_cnt++, 0);
+        EXPECT_EQ(s_cnt++, i);
+        --t_cnt;
       });
     }
   }
