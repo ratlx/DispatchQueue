@@ -198,7 +198,7 @@ detail::DispatchQueueExecutor::takeNextTask(size_t& lastId) {
   if (lastId) {
     if (auto ka = getQueueToken(lastId)) {
       if (auto task = ka->tryTake()) {
-        return {ka, *task};
+        return {std::move(ka), std::move(*task)};
       }
     }
     // if our take fails, reset it
@@ -217,7 +217,7 @@ detail::DispatchQueueExecutor::takeNextTask(size_t& lastId) {
         if (ka->isSerial()) {
           lastId = *id;
         }
-        return {ka, *task};
+        return {std::move(ka), std::move(*task)};
       }
     }
   }
