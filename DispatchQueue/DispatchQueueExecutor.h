@@ -133,6 +133,6 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
 
   std::unique_ptr<BlockingQueue<size_t>> queueIdQueue_;
 
-  bool isJoin_{false};
+  std::atomic<bool> isJoin_{false};
 };
 } // namespace detail

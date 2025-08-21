@@ -37,7 +37,6 @@ detail::DispatchQueueExecutor::DispatchQueueExecutor(
               numPriorities, kMaxQueueSize)) {}
 
 detail::DispatchQueueExecutor::~DispatchQueueExecutor() {
-  joinKeepAliveOnce();
   stop();
 }
 
@@ -171,7 +170,7 @@ void detail::DispatchQueueExecutor::ensureActiveThreads() {
 }
 
 void detail::DispatchQueueExecutor::stopThreads(size_t n) {
-  threadsToStop_.fetch_add(static_cast<ssize_t>(n));
+  threadsToStop_.fetch_add(static_cast<ssize_t>(n), std::memory_order_relaxed);
   for (size_t i = 0; i < n; ++i) {
     queueIdQueue_->addWithPriority(0, Priority::LO_PRI);
   }
@@ -184,7 +183,7 @@ void detail::DispatchQueueExecutor::stopAndJoinAllThreads(bool isJoin) {
     maxThreads_.store(0, std::memory_order_release);
     activeThreads_.store(0, std::memory_order_release);
     n = threadList_.size();
-    isJoin_ = isJoin;
+    isJoin_.store(isJoin, std::memory_order_release);
     stopThreads(n);
     n += threadsToJoin_.load(std::memory_order_relaxed);
     threadsToJoin_.store(0, std::memory_order_relaxed);
@@ -284,7 +283,8 @@ void detail::DispatchQueueExecutor::threadRun(ThreadPtr thread) {
       task.performWithQueue(std::move(ka));
     }
 
-    if (threadsToStop_.load(std::memory_order_relaxed) > 0 && !isJoin_) {
+    if (threadsToStop_.load(std::memory_order_relaxed) > 0 &&
+        !isJoin_.load(std::memory_order_acquire)) {
       std::lock_guard w{threadListLock_};
       if (tryDecrToStop()) {
         threadList_.erase(thread);
