@@ -140,10 +140,10 @@ TEST(ConcurrentTest, Suspend) {
   EXPECT_EQ(cnt, n);
 }
 
-struct NoCopyOrMoveType {
-  NoCopyOrMoveType() = default;
-  NoCopyOrMoveType(const NoCopyOrMoveType&) noexcept = delete;
-  NoCopyOrMoveType(NoCopyOrMoveType&&) noexcept = default;
+struct OnlyMoveType {
+  OnlyMoveType() = default;
+  OnlyMoveType(const OnlyMoveType&) noexcept = delete;
+  OnlyMoveType(OnlyMoveType&&) noexcept = default;
 };
 
 TEST(ConcurrentTest, Return) {
@@ -155,13 +155,13 @@ TEST(ConcurrentTest, Return) {
         }).value(),
       0);
 
-  cq.sync<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
+  cq.sync<OnlyMoveType>([] { return OnlyMoveType{}; });
 
   auto ft1 = cq.async<string>([] {
     this_thread::sleep_for(10ms);
     return "Who are you on the bed?";
   });
-  auto ft2 = cq.async<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
+  auto ft2 = cq.async<OnlyMoveType>([] { return OnlyMoveType{}; });
 
   ft2.get();
   ft1.wait();

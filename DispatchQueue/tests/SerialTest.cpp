@@ -19,10 +19,10 @@ void add() {
   cnt.fetch_add(1);
 }
 
-struct NoCopyOrMoveType {
-  NoCopyOrMoveType() = default;
-  NoCopyOrMoveType(const NoCopyOrMoveType&) noexcept = delete;
-  NoCopyOrMoveType(NoCopyOrMoveType&&) noexcept = default;
+struct OnlyMoveType {
+  OnlyMoveType() = default;
+  OnlyMoveType(const OnlyMoveType&) noexcept = delete;
+  OnlyMoveType(OnlyMoveType&&) noexcept = default;
 };
 
 TEST(SerialQueue, Sync) {
@@ -38,7 +38,7 @@ TEST(SerialQueue, Sync) {
       }),
       std::nullopt);
   EXPECT_TRUE(
-      sq.sync<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; }).has_value());
+      sq.sync<OnlyMoveType>([] { return OnlyMoveType{}; }).has_value());
 }
 
 TEST(SerialQueue, Async) {
@@ -65,7 +65,7 @@ TEST(SerialQueue, Async) {
   auto ft2 = sq.async<bool>([&] { return cnt == n * m; });
   EXPECT_TRUE(ft2.get());
 
-  auto ft3 = sq.async<NoCopyOrMoveType>([] { return NoCopyOrMoveType{}; });
+  auto ft3 = sq.async<OnlyMoveType>([] { return OnlyMoveType{}; });
   ft3.get();
 }
 
