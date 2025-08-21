@@ -33,12 +33,12 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
  public:
   virtual ~DispatchWorkItemBase() = default;
 
-  void wait() noexcept {
+  void wait() {
     checkAndSetWait();
     state_.isFinished_.wait(false);
   }
 
-  bool tryWait(std::chrono::milliseconds timeout) noexcept {
+  bool tryWait(std::chrono::milliseconds timeout) {
     checkAndSetWait();
     auto deadline = now() + timeout;
     while (now() < deadline) {
@@ -51,11 +51,11 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
   }
 
   void cancel() noexcept {
-    state_.canceled_.store(true, std::memory_order_relaxed);
+    state_.canceled_.store(true, std::memory_order_release);
   }
 
   bool isCanceled() const noexcept {
-    return state_.canceled_.load(std::memory_order_relaxed);
+    return state_.canceled_.load(std::memory_order_acquire);
   }
 
   virtual void perform() = 0;
@@ -120,6 +120,18 @@ class DispatchNotify {
     state_.store(NotifyState::none, std::memory_order_release);
   }
 
+  void cancel() noexcept {
+    auto e = NotifyState::notified;
+    if (state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      next_ = nullptr;
+      queueKA_.reset();
+    } else {
+      return;
+    }
+    state_.store(NotifyState::none, std::memory_order_release);
+  }
+
  private:
   void checkAndSetNotify() {
     auto e = NotifyState::none;
@@ -177,6 +189,18 @@ class DispatchNotify<void> {
     state_.store(NotifyState::none, std::memory_order_release);
   }
 
+  void cancel() noexcept {
+    auto e = NotifyState::notified;
+    if (state_.compare_exchange_strong(
+            e, NotifyState::notifying, std::memory_order_acq_rel)) {
+      queueKA_.reset();
+      auto task = std::move(next_);
+    } else {
+      return;
+    }
+    state_.store(NotifyState::none, std::memory_order_release);
+  }
+
  private:
   void checkAndSetNotify() {
     auto e = NotifyState::none;
@@ -213,6 +237,9 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   ~DispatchWorkItem() override { joinKeepAliveOnce(); }
 
   void notify(DispatchQueue& q, Callback<T> callback) {
+    if (isCanceled()) {
+      throw std::runtime_error("couldn't notify after canceled");
+    }
     nextWork_.notify(&q, std::move(callback));
   }
 
@@ -257,8 +284,10 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
       state_.isFinished_.notify_one();
     }
     // do notify when finish
-    if (res) {
+    if (!isCanceled() && res) {
       nextWork_.doNotify(std::move(*res));
+    } else {
+      nextWork_.cancel();
     }
   }
 
@@ -282,10 +311,16 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   ~DispatchWorkItem() override { joinKeepAliveOnce(); }
 
   void notify(DispatchQueue& q, Func<void> callback) {
+    if (isCanceled()) {
+      throw std::runtime_error("couldn't notify after canceled");
+    }
     nextWork_.notify(&q, std::move(callback));
   }
 
   void notify(DispatchQueue& q, DispatchWorkItem& work) {
+    if (isCanceled()) {
+      throw std::runtime_error("couldn't notify after canceled");
+    }
     nextWork_.notify(&q, &work);
   }
 
@@ -332,8 +367,10 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
       state_.isFinished_.notify_one();
     }
     // do notify when finish
-    if (success) {
+    if (!isCanceled() && success) {
       nextWork_.doNotify();
+    } else {
+      nextWork_.cancel();
     }
   }
 
