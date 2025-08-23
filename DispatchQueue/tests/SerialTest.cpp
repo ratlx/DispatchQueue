@@ -37,8 +37,7 @@ TEST(SerialQueue, Sync) {
         return 20;
       }),
       std::nullopt);
-  EXPECT_TRUE(
-      sq.sync<OnlyMoveType>([] { return OnlyMoveType{}; }).has_value());
+  EXPECT_TRUE(sq.sync<OnlyMoveType>([] { return OnlyMoveType{}; }).has_value());
 }
 
 TEST(SerialQueue, Async) {
@@ -74,6 +73,7 @@ TEST(SerialQueue, Combine) {
   const int n = 1000;
   int s_cnt = 0, t_cnt = 0;
 
+  // func task
   for (int i = 0; i < n; ++i) {
     if (i & 1) {
       sq.sync([&, i = i] {
@@ -87,6 +87,19 @@ TEST(SerialQueue, Combine) {
         EXPECT_EQ(s_cnt++, i);
         --t_cnt;
       });
+    }
+  }
+
+  auto work = DispatchWorkItem<void>([&] {
+    EXPECT_EQ(t_cnt++, 0);
+    --t_cnt;
+  });
+  // workItem task
+  for (int i = 0; i < n; ++i) {
+    if (i & 1) {
+      sq.sync(work);
+    } else {
+      sq.async(work);
     }
   }
 }
