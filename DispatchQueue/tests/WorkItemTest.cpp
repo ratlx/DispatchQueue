@@ -55,17 +55,11 @@ TEST(WorkItemTest, Wait) {
 TEST(WorkItemTest, Notify) {
   atomic<int> cnt = 0;
   binary_semaphore sem{0};
-  DispatchWorkItem<void> w1([&] {
-    cnt.fetch_add(1);
-    EXPECT_LE(cnt, 2);
-  });
+  DispatchWorkItem<void> w1([&] { cnt.fetch_add(1); });
 
   auto cur = this_thread::get_id();
   auto sq = DispatchSerialQueue("sq");
-  Callback<int> callback = [&](int res) {
-    EXPECT_EQ(res, 40);
-    sem.release();
-  };
+
   w1.notify(sq, [&] {
     EXPECT_NE(cur, this_thread::get_id());
     w1.perform();
@@ -77,10 +71,18 @@ TEST(WorkItemTest, Notify) {
   sem.acquire();
 
   auto w2 = DispatchWorkItem<int>(Func<int>(testFunc));
-  w2.notify(sq, callback);
+  Callback<int> callback = [&](int res) {
+    EXPECT_EQ(res, 40);
+    sem.release();
+  };
 
-  w2.perform();
+  w2.notify(sq, callback);
+  w1.notify(sq, w2);
+
+  w1.perform();
   sem.acquire();
+
+  EXPECT_EQ(cnt, 3);
 }
 
 TEST(WorkItemTest, Cancel) {
