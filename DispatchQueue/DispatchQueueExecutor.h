@@ -6,12 +6,12 @@
 
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <semaphore>
 #include <set>
 #include <shared_mutex>
 #include <thread>
-#include <vector>
 
 #include "DispatchKeepAlive.h"
 #include "DispatchQueue.h"
@@ -70,6 +70,16 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
     std::counting_semaphore<> sem_{0};
   };
 
+  struct QueueInfo {
+    QueueWR weakRef_{};
+    bool isSerial_{false};
+
+    void reset() noexcept {
+      weakRef_.reset();
+      isSerial_ = false;
+    }
+  };
+
   DispatchQueueExecutor(
       size_t numThreads, uint8_t numPriorities, size_t maxQueueSize);
 
@@ -78,10 +88,12 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
 
   ~DispatchQueueExecutor();
 
-  void add(size_t queueId) { addWithPriority(queueId, Priority::MID_PRI); }
-  void addWithPriority(size_t queueId, int8_t priority);
+  void add(QueueWR queue) {
+    addWithPriority(std::move(queue), Priority::MID_PRI);
+  }
+  void addWithPriority(QueueWR queue, int8_t priority);
 
-  uint8_t getNumPriorities() const { return queueIdQueue_->getNumPriorities(); }
+  uint8_t getNumPriorities() const { return taskQueues_->getNumPriorities(); }
 
   size_t getQueueSize() const noexcept;
 
@@ -89,11 +101,6 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   void join();
 
   static ExecutorKA getGlobalExecutor();
-
-  using DispatchQueueList = std::vector<detail::QueueKA>;
-  size_t registerDispatchQueue(DispatchQueue*);
-  void deregisterDispatchQueue(DispatchQueue*);
-  detail::QueueKA getQueueToken(size_t id);
 
  private:
   void ensureJoined();
@@ -104,10 +111,10 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   void stopThreads(size_t n);
   void stopAndJoinAllThreads(bool isJoin);
 
-  std::pair<detail::QueueKA, detail::DispatchTask> takeNextTask(size_t&);
+  std::optional<DispatchTask> takeNextTask(QueueInfo&);
   bool tryDecrToStop();
   bool tryTimeoutThread();
-  bool threadShouldStop();
+  bool threadShouldStop(std::optional<DispatchTask>&);
   void threadRun(ThreadPtr thread);
 
   bool minActive() const noexcept;
@@ -116,10 +123,6 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   ThreadList threadList_;
 
   StoppedThreadQueue stoppedThreadQueue_;
-
-  std::shared_mutex dispatchQueueLock_;
-  // an empty keepAlive occupies index 0
-  DispatchQueueList dispatchQueueList_{nullptr};
 
   // These are only modified while holding threadListLock_, but
   // are read without holding the lock.
@@ -131,7 +134,7 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   std::atomic<ssize_t> threadsToStop_{0};
   std::atomic<std::chrono::milliseconds> threadTimeout_;
 
-  std::unique_ptr<BlockingQueue<size_t>> queueIdQueue_;
+  std::unique_ptr<BlockingQueue<QueueWR>> taskQueues_;
 
   std::atomic<bool> isJoin_{false};
 };

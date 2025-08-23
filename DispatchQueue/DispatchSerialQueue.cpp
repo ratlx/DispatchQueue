@@ -17,18 +17,16 @@ DispatchSerialQueue::DispatchSerialQueue(
                    : DispatchAttribute::serial |
                   DispatchAttribute::initiallyInactive) {
   executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
-  id_ = executor_->registerDispatchQueue(this);
 }
 
 DispatchSerialQueue::~DispatchSerialQueue() {
-  executor_->deregisterDispatchQueue(this);
   joinKeepAliveOnce();
 }
 
 void DispatchSerialQueue::sync(Func<void> func) {
   auto task = detail::DispatchTask(std::move(func), false);
   addTask(task);
-  task.performWithQueue(getKeepAliveToken(this));
+  task.performWithQueue(getQueueWeakRef());
   notifyNextWork();
 }
 
@@ -111,6 +109,6 @@ void DispatchSerialQueue::notifyNextWork() {
   } else {
     // we don't need the lock now
     lock.unlock();
-    executor_->addWithPriority(id_, priority_);
+    executor_->addWithPriority(getQueueWeakRef(), priority_);
   }
 }

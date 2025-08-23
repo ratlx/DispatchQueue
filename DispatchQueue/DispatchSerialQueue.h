@@ -32,7 +32,7 @@ class DispatchSerialQueue : public DispatchQueue {
   void sync(DispatchWorkItem<T>& workItem) {
     auto task = detail::DispatchTask(&workItem, false);
     addTask(task);
-    task.performWithQueue(getKeepAliveToken(this));
+    task.performWithQueue(getQueueWeakRef());
     notifyNextWork();
   }
 
@@ -40,14 +40,14 @@ class DispatchSerialQueue : public DispatchQueue {
   template <typename R>
   std::optional<R> sync(Func<R> func) {
     auto promise = std::make_shared<std::promise<R>>();
-    auto futrue = promise->get_future();
+    auto ft = promise->get_future();
     auto task =
         detail::DispatchTask(std::move(func), std::move(promise), false);
     addTask(task);
-    task.performWithQueue(getKeepAliveToken(this));
+    task.performWithQueue(getQueueWeakRef());
     notifyNextWork();
     try {
-      return futrue.get();
+      return ft.get();
     } catch (...) {
       return std::nullopt;
     }

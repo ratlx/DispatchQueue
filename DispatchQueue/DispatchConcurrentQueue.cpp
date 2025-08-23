@@ -3,7 +3,6 @@
 //
 
 #include <future>
-#include <memory>
 
 #include "DispatchConcurrentQueue.h"
 #include "DispatchQueueExecutor.h"
@@ -19,19 +18,16 @@ DispatchConcurrentQueue::DispatchConcurrentQueue(
                   DispatchAttribute::initiallyInactive),
       taskQueue_(kDefaultTaskQueueSize) {
   executor_ = detail::DispatchQueueExecutor::getGlobalExecutor();
-  id_ = executor_->registerDispatchQueue(this);
 }
 
 DispatchConcurrentQueue::~DispatchConcurrentQueue() {
-  executor_->deregisterDispatchQueue(this);
   joinKeepAliveOnce();
 }
 
 void DispatchConcurrentQueue::sync(Func<void> func) noexcept {
   inactive_.wait(true);
   suspend_.wait(true);
-  detail::DispatchTask::makeTaskFunc(std::move(func))(
-      detail::DispatchKeepAlive::getKeepAliveToken(this));
+  detail::DispatchTask::makeTaskFunc(std::move(func))(getQueueWeakRef());
 }
 
 void DispatchConcurrentQueue::async(Func<void> func) {
@@ -56,7 +52,7 @@ void DispatchConcurrentQueue::activate() {
     }
   }
   for (int i = 0; i < n; ++i) {
-    executor_->addWithPriority(id_, priority_);
+    executor_->addWithPriority(getQueueWeakRef(), priority_);
   }
 }
 
@@ -79,7 +75,7 @@ void DispatchConcurrentQueue::resume() {
     }
   }
   for (int i = 0; i < n; ++i) {
-    executor_->addWithPriority(id_, priority_);
+    executor_->addWithPriority(getQueueWeakRef(), priority_);
   }
 }
 

@@ -32,6 +32,7 @@ template <typename T>
 class DispatchNotify;
 
 using QueueKA = DispatchKeepAlive::KeepAlive<DispatchQueue>;
+using QueueWR = DispatchKeepAlive::WeakRef<DispatchQueue>;
 } // namespace detail
 
 class DispatchQueue : public detail::DispatchKeepAlive {
@@ -55,7 +56,7 @@ class DispatchQueue : public detail::DispatchKeepAlive {
     return attribute_ & DispatchAttribute::serial;
   }
 
-  std::string getLabel() const noexcept { return label_; }
+  std::string_view getLabel() const noexcept { return label_; }
 
  protected:
   // The method doNotify in DispatchNotify<void> requires asyncImpl
@@ -70,13 +71,19 @@ class DispatchQueue : public detail::DispatchKeepAlive {
     }
   }
 
+  detail::QueueWR getQueueWeakRef() noexcept { return getWeakRef(this); }
+
   virtual std::optional<detail::DispatchTask> tryTake() = 0;
   virtual bool suspendCheck() = 0;
 
+  // the name of the dispatch queue
   std::string label_;
-  size_t id_{0};
+
+  // the priority of the dispatch queue
   const int8_t priority_{0};
+
   std::atomic<bool> inactive_{false};
+
   std::atomic<ssize_t> suspendCount_{0};
 
  private:

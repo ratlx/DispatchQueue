@@ -60,7 +60,7 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
 
   virtual void perform() = 0;
 
-  virtual void performWithQueue(detail::QueueKA) = 0;
+  virtual void performWithQueue(const QueueWR&) = 0;
 
  protected:
   void checkAndSetWait() {
@@ -83,10 +83,26 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
     }
   }
 
+  static void exceptionHandlerWithQueue(
+      const detail::QueueWR& wr,
+      std::string_view what = "unknown error") noexcept {
+    auto ka = wr.lock();
+    std::string_view label = ka ? ka->getLabel() : "deallocated";
+    std::cerr << "WorkItem exception in queue " << label << ": " << what
+              << ". Cancel do notify" << std::endl;
+  }
+
+  static void exceptionHandler(
+      std::string_view what = "unknown error") noexcept {
+    std::cerr << "WorkItem exception: " << what << ". Cancel do notify"
+              << std::endl;
+  }
+
   DispatchWorkState state_{};
 };
 
 using WorkItemKA = DispatchKeepAlive::KeepAlive<DispatchWorkItemBase>;
+using WorkItemWR = DispatchKeepAlive::WeakRef<DispatchWorkItemBase>;
 
 enum class NotifyState { none, notifying, notified };
 
@@ -104,7 +120,7 @@ class DispatchNotify {
   void notify(DispatchQueue* qptr, Callback<T> callback) {
     checkAndSetNotify();
     next_ = std::move(callback);
-    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    queueWR_ = DispatchKeepAlive::getWeakRef(qptr);
     state_.store(NotifyState::notified, std::memory_order_release);
   }
 
@@ -112,8 +128,10 @@ class DispatchNotify {
     auto e = NotifyState::notified;
     if (state_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
-      auto queueKA = std::move(queueKA_);
-      queueKA->async(std::bind(std::move(next_), std::move(res)));
+      if (auto queue = queueWR_.lock()) {
+        queue->async(std::bind(std::move(next_), std::move(res)));
+      }
+      queueWR_.reset();
     } else {
       return;
     }
@@ -125,7 +143,7 @@ class DispatchNotify {
     if (state_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
       next_ = nullptr;
-      queueKA_.reset();
+      queueWR_.reset();
     } else {
       return;
     }
@@ -142,7 +160,7 @@ class DispatchNotify {
   }
 
   Callback<T> next_{};
-  QueueKA queueKA_{};
+  QueueWR queueWR_{};
   std::atomic<NotifyState> state_{NotifyState::none};
 };
 
@@ -159,15 +177,15 @@ class DispatchNotify<void> {
 
   void notify(DispatchQueue* qptr, DispatchWorkItemBase* wptr) {
     checkAndSetNotify();
-    next_ = DispatchKeepAlive::getKeepAliveToken(wptr);
-    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    next_ = DispatchKeepAlive::getWeakRef(wptr);
+    queueWR_ = DispatchKeepAlive::getWeakRef(qptr);
     state_.store(NotifyState::notified, std::memory_order_release);
   }
 
   void notify(DispatchQueue* qptr, Func<void> callback) {
     checkAndSetNotify();
     next_ = std::move(callback);
-    queueKA_ = DispatchKeepAlive::getKeepAliveToken(qptr);
+    queueWR_ = DispatchKeepAlive::getWeakRef(qptr);
     state_.store(NotifyState::notified, std::memory_order_release);
   }
 
@@ -175,13 +193,19 @@ class DispatchNotify<void> {
     auto e = NotifyState::notified;
     if (state_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
-      auto queueKA = std::move(queueKA_);
+      auto queueKA = queueWR_.lock();
+      queueWR_.reset();
       if (std::holds_alternative<Func<void>>(next_)) {
         auto func = std::move(std::get<Func<void>>(next_));
-        queueKA->async(std::move(func));
+        if (queueKA) {
+          queueKA->async(std::move(func));
+        }
       } else {
-        auto work = std::move(std::get<WorkItemKA>(next_));
-        queueKA->asyncImpl(work.get());
+        auto workWR = std::move(std::get<WorkItemWR>(next_));
+        auto workKA = workWR.lock();
+        if (queueKA && workKA) {
+          queueKA->asyncImpl(workKA.get());
+        }
       }
     } else {
       return;
@@ -193,7 +217,7 @@ class DispatchNotify<void> {
     auto e = NotifyState::notified;
     if (state_.compare_exchange_strong(
             e, NotifyState::notifying, std::memory_order_acq_rel)) {
-      queueKA_.reset();
+      queueWR_.reset();
       auto task = std::move(next_);
     } else {
       return;
@@ -210,8 +234,8 @@ class DispatchNotify<void> {
     }
   }
 
-  std::variant<Func<void>, WorkItemKA> next_{};
-  QueueKA queueKA_{};
+  std::variant<Func<void>, WorkItemWR> next_{};
+  QueueWR queueWR_{};
   std::atomic<NotifyState> state_{NotifyState::none};
 };
 }; // namespace detail
@@ -234,7 +258,10 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override { joinKeepAliveOnce(); }
+  ~DispatchWorkItem() override {
+    func_ = nullptr;
+    joinKeepAliveOnce();
+  }
 
   void notify(DispatchQueue& q, Callback<T> callback) {
     if (isCanceled()) {
@@ -250,28 +277,24 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
       try {
         res.emplace(func_());
       } catch (const std::exception& ex) {
-        std::cerr << "WorkItem: " << ex.what() << ". Cancel do notify"
-                  << std::endl;
+        exceptionHandler(ex.what());
       } catch (...) {
-        std::cerr << "WorkItem: unknown error." << ". Cancel do notify"
-                  << std::endl;
+        exceptionHandler();
       }
     }
     finish(res);
   }
 
-  void performWithQueue(detail::QueueKA ka) override {
+  void performWithQueue(const detail::QueueWR& wr) override {
     checkAndSetCount();
     std::optional<T> res;
     if (!isCanceled()) {
       try {
         res.emplace(func_());
       } catch (const std::exception& ex) {
-        std::cerr << "WorkItem exception in queue " << ka->getLabel() << ": "
-                  << ex.what() << ". Cancel do notify" << std::endl;
+        exceptionHandlerWithQueue(wr, ex.what());
       } catch (...) {
-        std::cerr << "WorkItem: unknown error in queue " << ka->getLabel()
-                  << ". Cancel do notify" << std::endl;
+        exceptionHandlerWithQueue(wr);
       }
     }
     finish(std::move(res));
@@ -308,7 +331,10 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override { joinKeepAliveOnce(); }
+  ~DispatchWorkItem() override {
+    func_ = nullptr;
+    joinKeepAliveOnce();
+  }
 
   void notify(DispatchQueue& q, Func<void> callback) {
     if (isCanceled()) {
@@ -317,7 +343,8 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
     nextWork_.notify(&q, std::move(callback));
   }
 
-  void notify(DispatchQueue& q, DispatchWorkItem& work) {
+  template <typename T>
+  void notify(DispatchQueue& q, DispatchWorkItem<T>& work) {
     if (isCanceled()) {
       throw std::runtime_error("couldn't notify after canceled");
     }
@@ -332,17 +359,15 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
         func_();
         success = true;
       } catch (const std::exception& ex) {
-        std::cerr << "WorkItem: " << ex.what() << ". Cancel do notify"
-                  << std::endl;
+        exceptionHandler(ex.what());
       } catch (...) {
-        std::cerr << "WorkItem: unknown error." << ". Cancel do notify"
-                  << std::endl;
+        exceptionHandler();
       }
     }
     finish(success);
   }
 
-  void performWithQueue(detail::QueueKA ka) override {
+  void performWithQueue(const detail::QueueWR& wr) override {
     checkAndSetCount();
     bool success = false;
     if (!isCanceled()) {
@@ -350,11 +375,9 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
         func_();
         success = true;
       } catch (const std::exception& ex) {
-        std::cerr << "WorkItem exception in queue " << ka->getLabel() << ": "
-                  << ex.what() << ". Cancel do notify" << std::endl;
+        exceptionHandlerWithQueue(wr, ex.what());
       } catch (...) {
-        std::cerr << "WorkItem: unknown error in queue " << ka->getLabel()
-                  << ". Cancel do notify" << std::endl;
+        exceptionHandlerWithQueue(wr);
       }
     }
     finish(success);

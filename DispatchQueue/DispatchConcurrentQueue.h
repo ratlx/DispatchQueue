@@ -34,7 +34,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
   void sync(DispatchWorkItem<T>& workItem) {
     inactive_.wait(true);
     suspend_.wait(true);
-    workItem.performWithQueue(getKeepAliveToken(this));
+    workItem.performWithQueue(getQueueWeakRef());
   }
 
   template <typename R>
@@ -42,7 +42,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
     inactive_.wait(true);
     suspend_.wait(true);
     return detail::DispatchTask::makeOptionalTaskFunc<R>(std::move(func))(
-        getKeepAliveToken(this));
+        getQueueWeakRef());
   }
 
   void async(Func<void> func) override;
@@ -82,7 +82,7 @@ class DispatchConcurrentQueue : public DispatchQueue {
         return;
       }
     }
-    executor_->addWithPriority(id_, priority_);
+    executor_->addWithPriority(getQueueWeakRef(), priority_);
   }
 
   std::optional<detail::DispatchTask> tryTake() override;

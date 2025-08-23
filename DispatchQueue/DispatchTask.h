@@ -20,31 +20,32 @@
 namespace detail {
 class DispatchTask {
  public:
-  using TaskFunc = std::function<void(detail::QueueKA)>;
+  using TaskFunc = std::function<void(const QueueWR&)>;
 
   template <typename R>
-  using OptionalTaskFunc = std::function<std::optional<R>(detail::QueueKA)>;
+  using OptionalTaskFunc = std::function<std::optional<R>(const QueueWR&)>;
 
-  using TaskVariant = std::variant<TaskFunc, WorkItemKA>;
+  using TaskVariant = std::variant<TaskFunc, WorkItemWR>;
+
   using WaitSem = std::shared_ptr<std::binary_semaphore>;
 
   class AsyncTask {
    public:
+    // poison
     AsyncTask() noexcept = default;
 
     explicit AsyncTask(TaskFunc f) noexcept : task_(std::move(f)) {}
 
     AsyncTask(TaskFunc f, DispatchGroup* g) noexcept
-        : task_(std::move(f)),
-          groupKA_(DispatchKeepAlive::getKeepAliveToken(g)) {}
+        : task_(std::move(f)), groupWR_(DispatchKeepAlive::getWeakRef(g)) {}
 
     explicit AsyncTask(DispatchWorkItemBase* w) noexcept
-        : task_(DispatchKeepAlive::getKeepAliveToken(w)) {}
+        : task_(DispatchKeepAlive::getWeakRef(w)) {}
 
     AsyncTask(const AsyncTask& other) noexcept = default;
 
     AsyncTask(AsyncTask&& other) noexcept
-        : task_(std::move(other.task_)), groupKA_(std::move(other.groupKA_)) {}
+        : task_(std::move(other.task_)), groupWR_(std::move(other.groupWR_)) {}
 
     ~AsyncTask() noexcept = default;
 
@@ -54,34 +55,47 @@ class DispatchTask {
 
     AsyncTask& operator=(AsyncTask&& other) noexcept {
       task_ = std::move(other.task_);
-      groupKA_ = std::move(other.groupKA_);
+      groupWR_ = std::move(other.groupWR_);
       return *this;
     }
 
-    void performWithQueue(detail::QueueKA ka) noexcept {
-      if (task_.index() == 0) {
-        std::get<0>(task_)(std::move(ka));
-        if (groupKA_) {
-          groupKA_->leave();
+    void performWithQueue(const QueueWR& weakRef) noexcept {
+      if (std::holds_alternative<TaskFunc>(task_)) {
+        std::get<TaskFunc>(task_)(weakRef);
+        if (auto g = groupWR_.lock()) {
+          g->leave();
         }
       } else {
-        std::get<1>(task_)->performWithQueue(std::move(ka));
+        auto wr = std::move(std::get<WorkItemWR>(task_));
+        if (auto w = wr.lock()) {
+          w->performWithQueue(weakRef);
+        }
       }
     }
 
+    [[nodiscard]] bool isPoison() const noexcept {
+      if (std::holds_alternative<TaskFunc>(task_)) {
+        return std::get<TaskFunc>(task_) == nullptr;
+      }
+      return !static_cast<bool>(std::get<WorkItemWR>(task_));
+    }
+
    private:
+    friend class DispatchTask;
+
     TaskVariant task_{TaskFunc(nullptr)};
-    detail::GroupKA groupKA_{};
+    detail::GroupWR groupWR_{};
   };
 
   class SyncTask {
    public:
+    // poison
     SyncTask() noexcept = default;
 
     explicit SyncTask(TaskFunc f) noexcept : task_(std::move(f)) {}
 
     explicit SyncTask(DispatchWorkItemBase* w) noexcept
-        : task_(DispatchKeepAlive::getKeepAliveToken(w)) {}
+        : task_(DispatchKeepAlive::getWeakRef(w)) {}
 
     // when using copy construct, we only copy the wait sem.
     SyncTask(const SyncTask& other) noexcept : wait_(other.wait_) {};
@@ -101,15 +115,22 @@ class DispatchTask {
       return *this;
     }
 
-    void performWithQueue(detail::QueueKA ka) noexcept {
+    void performWithQueue(const QueueWR& weakRef) noexcept {
       if (wait_) {
         wait_->acquire();
       }
-      if (task_.index() == 0) {
-        std::get<0>(task_)(std::move(ka));
+      if (std::holds_alternative<TaskFunc>(task_)) {
+        std::get<TaskFunc>(task_)(weakRef);
       } else {
-        std::get<1>(task_)->performWithQueue(std::move(ka));
+        auto work = std::move(std::get<WorkItemWR>(task_));
+        if (auto w = work.lock()) {
+          w->performWithQueue(weakRef);
+        }
       }
+    }
+
+    [[nodiscard]] bool isPoison() const noexcept {
+      return !static_cast<bool>(wait_);
     }
 
    private:
@@ -119,9 +140,8 @@ class DispatchTask {
     WaitSem wait_{std::make_shared<std::binary_semaphore>(0)};
   };
 
+  // poison
   DispatchTask() noexcept = default;
-
-  DispatchTask(nullptr_t) noexcept : DispatchTask() {};
 
   DispatchTask(Func<void> f, DispatchGroup* g) noexcept
       : task_(AsyncTask(makeTaskFunc(std::move(f)), g)) {}
@@ -167,46 +187,44 @@ class DispatchTask {
     return *this;
   }
 
-  void performWithQueue(detail::QueueKA ka) noexcept {
-    std::visit(
-        [&](auto&& task) { task.performWithQueue(std::move(ka)); }, task_);
+  void performWithQueue(const QueueWR& wr) noexcept {
+    std::visit([&](auto&& task) { task.performWithQueue(wr); }, task_);
   }
 
-  bool isSyncTask() const noexcept { return task_.index() == 1; }
-
-  void notifySync() {
-    if (auto wait = std::get<1>(task_).wait_) {
-      wait->release();
-    }
+  //
+  [[nodiscard]] bool isPoison() const noexcept {
+    return std::visit([](auto&& task) { return task.isPoison(); }, task_);
   }
+
+  [[nodiscard]] bool isSyncTask() const noexcept {
+    return std::holds_alternative<SyncTask>(task_);
+  }
+
+  void notifySync() const { std::get<SyncTask>(task_).wait_->release(); }
 
   template <typename R>
     requires(!std::is_void_v<R>)
   static OptionalTaskFunc<R> makeOptionalTaskFunc(Func<R> func) noexcept {
-    return [func = std::move(func)](detail::QueueKA ka) -> std::optional<R> {
+    return [&, func = std::move(func)](const QueueWR& wr) -> std::optional<R> {
       try {
         return func();
       } catch (const std::exception& ex) {
-        std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                  << ex.what() << std::endl;
+        exceptionHandler(wr, ex.what());
       } catch (...) {
-        std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                  << "unknown error" << std::endl;
+        exceptionHandler(wr);
       }
       return std::nullopt;
     };
   }
 
   static TaskFunc makeTaskFunc(Func<void> func) noexcept {
-    return [func = std::move(func)](detail::QueueKA ka) {
+    return [&, func = std::move(func)](const QueueWR& wr) {
       try {
         func();
       } catch (const std::exception& ex) {
-        std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                  << ex.what() << std::endl;
+        exceptionHandler(wr, ex.what());
       } catch (...) {
-        std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                  << "unknown error" << std::endl;
+        exceptionHandler(wr);
       }
     };
   }
@@ -215,22 +233,29 @@ class DispatchTask {
     requires(!std::is_void_v<R>)
   TaskFunc makePromiseTaskFunc(
       Func<R> func, std::shared_ptr<std::promise<R>> promise) noexcept {
-    return [func = std::move(func),
-            promise = std::move(promise)](detail::QueueKA ka) mutable {
+    return [&, func = std::move(func), promise = std::move(promise)](
+               const QueueWR& wr) {
       try {
         promise->set_value(func());
       } catch (...) {
         try {
           promise->set_exception(std::current_exception());
         } catch (const std::exception& ex) {
-          std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                    << ex.what() << std::endl;
+          exceptionHandler(wr, ex.what());
         } catch (...) {
-          std::cerr << "Task exception in queue " << ka->getLabel() << ": "
-                    << "unknown error" << std::endl;
+          exceptionHandler(wr);
         }
       }
     };
+  }
+
+  static void exceptionHandler(
+      const detail::QueueWR& wr,
+      std::string_view what = "unknown error") noexcept {
+    auto ka = wr.lock();
+    auto label = ka ? ka->getLabel() : "deallocated";
+    std::cerr << "Task exception in queue " << label << ": " << what << "."
+              << std::endl;
   }
 
  private:

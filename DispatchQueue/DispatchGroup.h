@@ -37,7 +37,7 @@ class DispatchGroup : public detail::DispatchKeepAlive {
   bool tryWait(std::chrono::milliseconds timeout) const noexcept {
     auto deadline = now() + timeout;
     while (now() < deadline) {
-      if (taskCount_.load(std::memory_order_relaxed) == 0) {
+      if (taskCount_.load(std::memory_order_acquire) == 0) {
         return true;
       }
       std::this_thread::yield();
@@ -82,4 +82,5 @@ class DispatchGroup : public detail::DispatchKeepAlive {
 
 namespace detail {
 using GroupKA = DispatchKeepAlive::KeepAlive<DispatchGroup>;
-}
+using GroupWR = DispatchKeepAlive::WeakRef<DispatchGroup>;
+} // namespace detail
