@@ -21,7 +21,7 @@ int iterations() {
 }
 
 struct BigStruct {
-  char pad[128];
+  char pad[192];
 };
 
 template <
