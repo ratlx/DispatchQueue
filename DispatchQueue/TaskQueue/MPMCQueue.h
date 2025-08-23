@@ -34,7 +34,9 @@ class alignas(cache_line_size) Slot {
       std::optional<WaitGuard> guard;
       auto cur = turn_.load(std::memory_order_acquire);
       while (turn != cur) {
-        guard.emplace(waitCount_);
+        if (!guard) {
+          guard.emplace(waitCount_);
+        }
         turn_.wait(cur);
         cur = turn_.load(std::memory_order_acquire);
       }
