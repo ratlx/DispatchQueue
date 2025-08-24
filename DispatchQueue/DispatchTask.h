@@ -62,6 +62,8 @@ class DispatchTask {
     void performWithQueue(const QueueWR& weakRef) noexcept {
       if (std::holds_alternative<TaskFunc>(task_)) {
         std::get<TaskFunc>(task_)(weakRef);
+
+        // only taskfunc has group weakref
         if (auto g = groupWR_.lock()) {
           g->leave();
         }
@@ -92,10 +94,13 @@ class DispatchTask {
     // poison
     SyncTask() noexcept = default;
 
-    explicit SyncTask(TaskFunc f) noexcept : task_(std::move(f)) {}
+    explicit SyncTask(TaskFunc f) noexcept
+        : task_(std::move(f)),
+          wait_(std::make_shared<std::binary_semaphore>(0)) {}
 
     explicit SyncTask(DispatchWorkItemBase* w) noexcept
-        : task_(DispatchKeepAlive::getWeakRef(w)) {}
+        : task_(DispatchKeepAlive::getWeakRef(w)),
+          wait_(std::make_shared<std::binary_semaphore>(0)) {}
 
     // when using copy construct, we only copy the wait sem.
     SyncTask(const SyncTask& other) noexcept : wait_(other.wait_) {};
@@ -115,10 +120,9 @@ class DispatchTask {
       return *this;
     }
 
+    // must be not poison
     void performWithQueue(const QueueWR& weakRef) noexcept {
-      if (wait_) {
-        wait_->acquire();
-      }
+      wait_->acquire();
       if (std::holds_alternative<TaskFunc>(task_)) {
         std::get<TaskFunc>(task_)(weakRef);
       } else {
@@ -137,7 +141,7 @@ class DispatchTask {
     friend class DispatchTask;
 
     TaskVariant task_{TaskFunc(nullptr)};
-    WaitSem wait_{std::make_shared<std::binary_semaphore>(0)};
+    WaitSem wait_{nullptr};
   };
 
   // poison
@@ -191,7 +195,6 @@ class DispatchTask {
     std::visit([&](auto&& task) { task.performWithQueue(wr); }, task_);
   }
 
-  //
   [[nodiscard]] bool isPoison() const noexcept {
     return std::visit([](auto&& task) { return task.isPoison(); }, task_);
   }
