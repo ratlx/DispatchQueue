@@ -47,7 +47,7 @@ void DispatchConcurrentQueue::activate() {
     inactive_.notify_all();
 
     std::unique_lock l{taskLock_};
-    if (!suspend_.load(std::memory_order_relaxed)) {
+    if (!suspend_.load(std::memory_order_acquire)) {
       n = taskToAdd_.exchange(0, std::memory_order_relaxed);
     }
   }
