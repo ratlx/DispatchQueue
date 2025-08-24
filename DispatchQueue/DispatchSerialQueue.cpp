@@ -102,10 +102,10 @@ void DispatchSerialQueue::notifyNextWork() {
     threadAttach_.store(false, std::memory_order_release);
     return;
   }
-  auto task = taskQueue_.front();
+  auto& task = taskQueue_.front();
   if (task.isSyncTask()) {
-    taskQueue_.pop();
     task.notifySync();
+    taskQueue_.pop();
   } else {
     // we don't need the lock now
     lock.unlock();
