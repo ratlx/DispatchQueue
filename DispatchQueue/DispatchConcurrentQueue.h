@@ -7,7 +7,6 @@
 #include <atomic>
 #include <future>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 
 #include "DispatchQueue.h"
@@ -73,12 +72,12 @@ class DispatchConcurrentQueue : public DispatchQueue {
     taskQueue_.blockingWrite(std::forward<Args>(args)...);
     if (inactive_.load(std::memory_order_acquire) ||
         suspend_.load(std::memory_order_acquire)) {
-      std::shared_lock l{taskLock_};
+      // task notify later
+      taskToNotify_.fetch_add(1, std::memory_order_acq_rel);
 
-      // after lock acquire, double check.
+      // double check
       if (inactive_.load(std::memory_order_acquire) ||
           suspend_.load(std::memory_order_acquire)) {
-        taskToAdd_.fetch_add(1, std::memory_order_relaxed);
         return;
       }
     }
@@ -90,8 +89,12 @@ class DispatchConcurrentQueue : public DispatchQueue {
 
  private:
   MPMCQueue<detail::DispatchTask, true> taskQueue_;
-  std::shared_mutex taskLock_;
-  std::atomic<size_t> taskToAdd_;
+
+  // How many tasks have been queued but still not notified to the executor. it
+  // is not an exact value, but is guaranteed to be greater than or equal
+  // to the number that needs to be notified
+  std::atomic<size_t> taskToNotify_;
+
   std::atomic<bool> suspend_{false};
 
   detail::ExecutorKA executor_{};

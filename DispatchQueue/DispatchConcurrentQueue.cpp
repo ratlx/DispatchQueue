@@ -46,9 +46,8 @@ void DispatchConcurrentQueue::activate() {
     // wake up all the sync task.
     inactive_.notify_all();
 
-    std::unique_lock l{taskLock_};
     if (!suspend_.load(std::memory_order_acquire)) {
-      n = taskToAdd_.exchange(0, std::memory_order_relaxed);
+      n = taskToNotify_.exchange(0, std::memory_order_acq_rel);
     }
   }
   for (int i = 0; i < n; ++i) {
@@ -69,9 +68,8 @@ void DispatchConcurrentQueue::resume() {
     // wake up all the sync task
     suspend_.notify_all();
 
-    std::unique_lock l{taskLock_};
     if (!inactive_.load(std::memory_order_acquire)) {
-      n = taskToAdd_.exchange(0, std::memory_order_relaxed);
+      n = taskToNotify_.exchange(0, std::memory_order_acq_rel);
     }
   }
   for (int i = 0; i < n; ++i) {
@@ -95,11 +93,10 @@ std::optional<detail::DispatchTask> DispatchConcurrentQueue::tryTake() {
 
 bool DispatchConcurrentQueue::suspendCheck() {
   if (suspend_.load(std::memory_order_acquire)) {
-    std::shared_lock l{taskLock_};
+    taskToNotify_.fetch_add(1, std::memory_order_acq_rel);
 
-    // after lock acquire, double check.
+    // double check.
     if (suspend_.load(std::memory_order_acquire)) {
-      taskToAdd_.fetch_add(1, std::memory_order_relaxed);
       return true;
     }
   }
