@@ -68,8 +68,12 @@ class DispatchGroup : public detail::DispatchKeepAlive {
     }
   }
 
-  void notify(DispatchQueue& q, DispatchWorkItem<void>& work) {
+  template <typename T>
+  void notify(DispatchQueue& q, DispatchWorkItem<T>& work) {
     nextWork_.notify(&q, &work);
+    if (taskCount_.load(std::memory_order_acquire) == 0) {
+      nextWork_.doNotify();
+    }
   }
 
  private:

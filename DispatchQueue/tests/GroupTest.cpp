@@ -9,6 +9,7 @@
 
 #include <DispatchQueue/DispatchGroup.h>
 #include <DispatchQueue/DispatchSerialQueue.h>
+#include <DispatchQueue/DispatchWorkItem.h>
 
 using namespace std;
 
@@ -17,8 +18,17 @@ TEST(GroupTest, Notify) {
   auto sq = DispatchSerialQueue("sq");
   atomic<int> cnt = 0;
   binary_semaphore sem{0};
+  auto w = DispatchWorkItem<int>([&] {
+    cnt++;
+    sem.release();
+    return 1;
+  });
   const int n = 100;
-  g.notify(sq, [&] { EXPECT_EQ(0, cnt); });
+  g.notify(sq, [&] { EXPECT_EQ(0, cnt++); });
+  g.notify(sq, w);
+  sem.acquire();
+  EXPECT_EQ(cnt, 2);
+  cnt = 0;
   for (int i = 0; i < n; ++i) {
     sq.async(
         [&] {
