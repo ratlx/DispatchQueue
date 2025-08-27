@@ -20,6 +20,16 @@ constexpr size_t cache_line_size = 128;
 #endif
 
 template <typename T>
+  requires std::is_integral_v<T>
+struct AtomicGuard {
+  explicit AtomicGuard(std::atomic<T>& guarded) : counter(guarded) {
+    counter.fetch_add(1, std::memory_order_acq_rel);
+  }
+  ~AtomicGuard() { counter.fetch_sub(1, std::memory_order_acq_rel); }
+  std::atomic<T>& counter;
+};
+
+template <typename T>
   requires(std::is_nothrow_destructible_v<T>)
 class alignas(cache_line_size) Slot {
   static_assert(
@@ -31,7 +41,7 @@ class alignas(cache_line_size) Slot {
     TurnController() noexcept = default;
 
     void waitForTurn(const size_t turn) noexcept {
-      std::optional<WaitGuard> guard;
+      std::optional<AtomicGuard<size_t>> guard;
       auto cur = turn_.load(std::memory_order_acquire);
       while (turn != cur) {
         if (!guard) {
@@ -51,14 +61,6 @@ class alignas(cache_line_size) Slot {
 
    private:
     friend class Slot<T>;
-
-    struct WaitGuard {
-      explicit WaitGuard(std::atomic<size_t>& guarded) : counter(guarded) {
-        counter.fetch_add(1, std::memory_order_acq_rel);
-      }
-      ~WaitGuard() { counter.fetch_sub(1, std::memory_order_release); }
-      std::atomic<size_t>& counter;
-    };
 
     std::atomic<size_t> turn_;
     std::atomic<size_t> waitCount_;
@@ -468,8 +470,8 @@ class MPMCQueue<T, true> {
  private:
   void seqlockReadSection(
       size_t& state, Slot*& slots, size_t& cap) const noexcept {
+    state = dstate_.load(std::memory_order_acquire);
     do {
-      state = dstate_.load(std::memory_order_acquire);
       while (state & 1) {
         dstate_.wait(state);
         state = dstate_.load(std::memory_order_acquire);
@@ -478,7 +480,12 @@ class MPMCQueue<T, true> {
       cap = dcapacity_.load(std::memory_order_relaxed);
       std::atomic_thread_fence(std::memory_order_acquire);
       // validate seqlock
-    } while (state != dstate_.load(std::memory_order_relaxed));
+      auto curState = dstate_.load(std::memory_order_relaxed);
+      if (state == curState) {
+        break;
+      }
+      state = curState;
+    } while (true);
   }
 
   bool maybeUpdateFromClosed(
