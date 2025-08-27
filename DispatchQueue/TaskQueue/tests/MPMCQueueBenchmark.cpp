@@ -5,10 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <mutex>
+#include <queue>
+#include <semaphore>
 #include <thread>
 #include <vector>
-#include <mutex>
-#include <semaphore>
 
 #include "../MPMCQueue.h"
 
@@ -26,9 +27,9 @@ struct BigStruct {
   char pad[192];
 };
 
-template<typename T>
+template <typename T>
 class MutexQueue {
-public:
+ public:
   void push(const T& e) {
     lock_guard l{m_};
     q_.push(e);
@@ -49,7 +50,7 @@ public:
     }
   }
 
-private:
+ private:
   mutex m_;
   queue<T> q_{};
   counting_semaphore<> s_{0};
@@ -135,11 +136,11 @@ void run_benchmark_for_type(const std::string& type_name) {
         [](auto& q, auto& val) { q.blockingWrite(val); },
         [](auto& q, auto& out) { q.blockingRead(out); });
 
-    benchmark<T>(
-        "MutexQueue",
-        q3,
-        [](auto& q, auto& val) { q.push(val); },
-        [](auto& q, auto& out) { q.pop(out); });
+    // benchmark<T>(
+    //     "MutexQueue",
+    //     q3,
+    //     [](auto& q, auto& val) { q.push(val); },
+    //     [](auto& q, auto& out) { q.pop(out); });
 
     num_threads *= 2;
 
