@@ -136,11 +136,11 @@ void run_benchmark_for_type(const std::string& type_name) {
         [](auto& q, auto& val) { q.blockingWrite(val); },
         [](auto& q, auto& out) { q.blockingRead(out); });
 
-    // benchmark<T>(
-    //     "MutexQueue",
-    //     q3,
-    //     [](auto& q, auto& val) { q.push(val); },
-    //     [](auto& q, auto& out) { q.pop(out); });
+    benchmark<T>(
+        "MutexQueue",
+        q3,
+        [](auto& q, auto& val) { q.push(val); },
+        [](auto& q, auto& out) { q.pop(out); });
 
     num_threads *= 2;
 
