@@ -45,16 +45,16 @@ void detail::DispatchQueueExecutor::join() {
   stopAndJoinAllThreads(true);
 }
 
-detail::ExecutorKA detail::DispatchQueueExecutor::getGlobalExecutor() {
-  static std::optional<DispatchQueueExecutor> globalExecutor;
+detail::ExecutorPtr detail::DispatchQueueExecutor::getGlobalExecutor() {
+  static ExecutorPtr globalExecutor;
   static std::once_flag once;
 
   std::call_once(once, [] {
-    globalExecutor.emplace(
-        std::thread::hardware_concurrency(), kDefaultPriority);
+    globalExecutor = std::make_shared<DispatchQueueExecutor>(
+        std::thread::hardware_concurrency());
   });
 
-  return getKeepAliveToken(&*globalExecutor);
+  return globalExecutor;
 }
 
 void detail::DispatchQueueExecutor::stop() {

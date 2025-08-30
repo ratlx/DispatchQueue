@@ -103,7 +103,7 @@ class DispatchSerialQueue : public DispatchQueue {
   std::queue<detail::DispatchTask> taskQueue_;
   std::mutex taskQueueLock_;
 
-  detail::ExecutorKA executor_{};
+  detail::ExecutorPtr executor_{};
 
   std::atomic<bool> threadAttach_{false};
 };

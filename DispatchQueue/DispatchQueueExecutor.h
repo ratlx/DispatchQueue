@@ -5,6 +5,7 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -21,6 +22,7 @@
 
 namespace detail {
 using ExecutorKA = DispatchKeepAlive::KeepAlive<DispatchQueueExecutor>;
+using ExecutorPtr = std::shared_ptr<DispatchQueueExecutor>;
 
 class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   enum { kDefaultPriority = 3, kMaxQueueSize = 100000000 };
@@ -100,7 +102,7 @@ class DispatchQueueExecutor : public detail::DispatchKeepAlive {
   void stop();
   void join();
 
-  static ExecutorKA getGlobalExecutor();
+  static ExecutorPtr getGlobalExecutor();
 
  private:
   void ensureJoined();

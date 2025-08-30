@@ -97,5 +97,5 @@ class DispatchConcurrentQueue : public DispatchQueue {
 
   std::atomic<bool> suspend_{false};
 
-  detail::ExecutorKA executor_{};
+  detail::ExecutorPtr executor_{};
 };
