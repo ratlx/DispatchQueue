@@ -1,4 +1,5 @@
 add_executable(TaskQueueTest tests/MPMCQueueTest.cpp tests/PrioritySemMPMCQueueTest.cpp)
+target_compile_options(TaskQueueTest PRIVATE -Wno-interference-size)
 
 target_link_libraries(TaskQueueTest PRIVATE GTest::gtest_main)
 set_target_properties(TaskQueueTest PROPERTIES BUILD_RPATH "${GTEST_DIR}")

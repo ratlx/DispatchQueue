@@ -4,6 +4,8 @@ add_library(DispatchQueue
         DispatchConcurrentQueue.cpp
 )
 
+target_compile_options(DispatchQueue PRIVATE -Wno-interference-size)
+
 target_include_directories(DispatchQueue PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
