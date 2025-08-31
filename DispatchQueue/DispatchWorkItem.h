@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <variant>
 
@@ -23,10 +24,9 @@ struct DispatchWorkState {
   DispatchWorkState& operator=(const DispatchWorkState&) = delete;
   DispatchWorkState& operator=(DispatchWorkState&&) = delete;
 
-  std::atomic<bool> isFinished_{false};
   std::atomic<size_t> count_{0};
-  std::atomic<bool> canceled_{false};
   std::atomic<bool> waited_{false};
+  std::atomic<bool> isFinished_{false};
 };
 
 class DispatchWorkItemBase : public DispatchKeepAlive {
@@ -50,13 +50,9 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
     return false;
   }
 
-  void cancel() noexcept {
-    state_.canceled_.store(true, std::memory_order_release);
-  }
+  virtual void cancel() noexcept = 0;
 
-  bool isCanceled() const noexcept {
-    return state_.canceled_.load(std::memory_order_acquire);
-  }
+  virtual bool isCanceled() const noexcept = 0;
 
   virtual void perform() = 0;
 
@@ -250,7 +246,9 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
  public:
   template <typename F, typename R = std::invoke_result_t<F>>
     requires std::is_same_v<T, R>
-  explicit DispatchWorkItem(F func) noexcept : func_(std::move(func)) {}
+  explicit DispatchWorkItem(F func) noexcept {
+    func_ = std::make_shared<Func<T>>(std::move(func));
+  }
 
   DispatchWorkItem(const DispatchWorkItem&) = delete;
   DispatchWorkItem(DispatchWorkItem&& w) = delete;
@@ -258,24 +256,23 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override {
-    func_ = nullptr;
-    joinKeepAliveOnce();
-  }
+  ~DispatchWorkItem() override { cancelImpl(); }
+
+  void cancel() noexcept override { cancelImpl(); }
+
+  bool isCanceled() const noexcept override { return func_ == nullptr; }
 
   void notify(DispatchQueue& q, Callback<T> callback) {
-    if (isCanceled()) {
-      throw std::runtime_error("couldn't notify after canceled");
-    }
     nextWork_.notify(&q, std::move(callback));
   }
 
   void perform() override {
     checkAndSetCount();
     std::optional<T> res;
-    if (!isCanceled()) {
+    auto func = func_;
+    if (func != nullptr) {
       try {
-        res.emplace(func_());
+        res.emplace(func->operator()());
       } catch (const std::exception& ex) {
         exceptionHandler(ex.what());
       } catch (...) {
@@ -288,9 +285,10 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   void performWithQueue(const detail::QueueWR& wr) override {
     checkAndSetCount();
     std::optional<T> res;
-    if (!isCanceled()) {
+    auto func = func_;
+    if (func != nullptr) {
       try {
-        res.emplace(func_());
+        res.emplace(func->operator()());
       } catch (const std::exception& ex) {
         exceptionHandlerWithQueue(wr, ex.what());
       } catch (...) {
@@ -307,14 +305,20 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
       state_.isFinished_.notify_one();
     }
     // do notify when finish
-    if (!isCanceled() && res) {
+    if (res) {
       nextWork_.doNotify(std::move(*res));
     } else {
       nextWork_.cancel();
     }
   }
 
-  Func<T> func_{};
+  void cancelImpl() noexcept {
+    // this func_ may hold a keep alive, so we need to reset it first.
+    func_.reset();
+    joinKeepAliveOnce();
+  }
+
+  std::shared_ptr<Func<T>> func_{};
   detail::DispatchNotify<T> nextWork_{};
 };
 
@@ -323,7 +327,9 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
  public:
   template <typename F, typename R = std::invoke_result_t<F>>
     requires std::is_void_v<R>
-  explicit DispatchWorkItem(F func) noexcept : func_(std::move(func)) {}
+  explicit DispatchWorkItem(F func) noexcept {
+    func_ = std::make_shared<Func<void>>(std::move(func));
+  }
 
   DispatchWorkItem(const DispatchWorkItem&) = delete;
   DispatchWorkItem(DispatchWorkItem&& w) = delete;
@@ -331,32 +337,28 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override {
-    func_ = nullptr;
-    joinKeepAliveOnce();
-  }
+  ~DispatchWorkItem() override { cancelImpl(); }
+
+  void cancel() noexcept override { cancelImpl(); }
+
+  bool isCanceled() const noexcept override { return func_ == nullptr; }
 
   void notify(DispatchQueue& q, Func<void> callback) {
-    if (isCanceled()) {
-      throw std::runtime_error("couldn't notify after canceled");
-    }
     nextWork_.notify(&q, std::move(callback));
   }
 
   template <typename T>
   void notify(DispatchQueue& q, DispatchWorkItem<T>& work) {
-    if (isCanceled()) {
-      throw std::runtime_error("couldn't notify after canceled");
-    }
     nextWork_.notify(&q, &work);
   }
 
   void perform() override {
     checkAndSetCount();
     bool success = false;
-    if (!isCanceled()) {
+    auto func = func_;
+    if (func != nullptr) {
       try {
-        func_();
+        func->operator()();
         success = true;
       } catch (const std::exception& ex) {
         exceptionHandler(ex.what());
@@ -370,9 +372,10 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   void performWithQueue(const detail::QueueWR& wr) override {
     checkAndSetCount();
     bool success = false;
-    if (!isCanceled()) {
+    auto func = func_;
+    if (func != nullptr) {
       try {
-        func_();
+        func->operator()();
         success = true;
       } catch (const std::exception& ex) {
         exceptionHandlerWithQueue(wr, ex.what());
@@ -390,13 +393,19 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
       state_.isFinished_.notify_one();
     }
     // do notify when finish
-    if (!isCanceled() && success) {
+    if (success) {
       nextWork_.doNotify();
     } else {
       nextWork_.cancel();
     }
   }
 
-  Func<void> func_{};
+  void cancelImpl() noexcept {
+    // this func_ may hold a keep alive, so we need to reset it first.
+    func_.reset();
+    joinKeepAliveOnce();
+  }
+
+  std::shared_ptr<Func<void>> func_{};
   detail::DispatchNotify<void> nextWork_{};
 };
