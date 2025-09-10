@@ -256,7 +256,10 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override { cancelImpl(); }
+  ~DispatchWorkItem() override {
+    cancelImpl();
+    joinKeepAliveOnce();
+  }
 
   void cancel() noexcept override { cancelImpl(); }
 
@@ -401,9 +404,8 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   }
 
   void cancelImpl() noexcept {
-    // this func_ may hold a keep alive, so we need to reset it first.
+    // this func_ may hold a keep alive, so we need to reset it.
     func_.reset();
-    joinKeepAliveOnce();
   }
 
   std::shared_ptr<Func<void>> func_{};
