@@ -24,8 +24,11 @@ struct DispatchWorkState {
   DispatchWorkState& operator=(const DispatchWorkState&) = delete;
   DispatchWorkState& operator=(DispatchWorkState&&) = delete;
 
+  // the perform count
   std::atomic<size_t> count_{0};
+  // whether someone is waiting
   std::atomic<bool> waited_{false};
+  // whether the task has been performed at least once
   std::atomic<bool> isFinished_{false};
 };
 
@@ -33,11 +36,13 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
  public:
   virtual ~DispatchWorkItemBase() = default;
 
+  // wait for the task to be completed
   void wait() {
     checkAndSetWait();
     state_.isFinished_.wait(false);
   }
 
+  // wait for the task to be completed
   bool tryWait(std::chrono::milliseconds timeout) {
     checkAndSetWait();
     auto deadline = now() + timeout;
@@ -94,6 +99,7 @@ class DispatchWorkItemBase : public DispatchKeepAlive {
               << std::endl;
   }
 
+  // the state of WorkItem
   DispatchWorkState state_{};
 };
 
@@ -102,6 +108,7 @@ using WorkItemWR = DispatchKeepAlive::WeakRef<DispatchWorkItemBase>;
 
 enum class NotifyState { none, notifying, notified };
 
+// This class is used to implement the notify function in DispatchWorkItem and DispatchGroup.
 template <typename T>
 class DispatchNotify {
  public:
@@ -155,8 +162,11 @@ class DispatchNotify {
     }
   }
 
+  // the callback task
   Callback<T> next_{};
+  // the weak pointer to the specific DispatchQueu
   QueueWR queueWR_{};
+  // record the state
   std::atomic<NotifyState> state_{NotifyState::none};
 };
 
@@ -230,13 +240,16 @@ class DispatchNotify<void> {
     }
   }
 
+  // the callback task
   std::variant<Func<void>, WorkItemWR> next_{};
+  // the weak pointer to the specific DispatchQueue
   QueueWR queueWR_{};
+  // record the state
   std::atomic<NotifyState> state_{NotifyState::none};
 };
 }; // namespace detail
 
-// typename T refers to the return value of the WorkItem, and when there is no
+// typename T refers to the return value of the task of the WorkItem, and when there is no
 // return value, T should be void.
 template <typename T>
   requires(
@@ -261,14 +274,22 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
     joinKeepAliveOnce();
   }
 
+  // cancel the task
   void cancel() noexcept override { cancelImpl(); }
 
+  // check whether the task is canceled
   bool isCanceled() const noexcept override { return func_ == nullptr; }
 
+  // notify is used to asynchronously commit a callback function to the specified
+  // DispatchQueue when the task completes successfully (no exceptions). Notify
+  // is one-time, meaning that after a task is successfully executed and callbacked,
+  // the callback needs to be set again.
   void notify(DispatchQueue& q, Callback<T> callback) {
     nextWork_.notify(&q, std::move(callback));
   }
 
+  // perform the task func synchronously. it will automatically catch uncaught
+  // exception in the task
   void perform() override {
     checkAndSetCount();
     std::optional<T> res;
@@ -305,9 +326,11 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   void finish(std::optional<T> res) noexcept {
     if (!state_.isFinished_.load(std::memory_order_acquire)) {
       state_.isFinished_.store(true, std::memory_order_release);
+      // someone may be waiting, we need to notify it
       state_.isFinished_.notify_one();
     }
-    // do notify when finish
+    // do notify when finish. if res is null, which means that the task performed
+    // unsuccessfully, we cancel nextWork
     if (res) {
       nextWork_.doNotify(std::move(*res));
     } else {
@@ -318,13 +341,16 @@ class DispatchWorkItem : public detail::DispatchWorkItemBase {
   void cancelImpl() noexcept {
     // this func_ may hold a keep alive, so we need to reset it first.
     func_.reset();
-    joinKeepAliveOnce();
   }
 
+  // the task of the WorkItem, shared pointers are used to make it easier to
+  // handle concurrency and other special cases
   std::shared_ptr<Func<T>> func_{};
+  // the callback of the WorkItem
   detail::DispatchNotify<T> nextWork_{};
 };
 
+// This full specialization is used for tasks that do not return values
 template <>
 class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
  public:
@@ -340,21 +366,36 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   DispatchWorkItem& operator=(const DispatchWorkItem&) = delete;
   DispatchWorkItem& operator=(DispatchWorkItem&&) = delete;
 
-  ~DispatchWorkItem() override { cancelImpl(); }
+  ~DispatchWorkItem() override {
+    cancelImpl();
+    joinKeepAliveOnce();
+  }
 
+  // cancel the task
   void cancel() noexcept override { cancelImpl(); }
 
+  // check whether the task is canceled
   bool isCanceled() const noexcept override { return func_ == nullptr; }
 
+  // notify is used to asynchronously commit a callback function to the specified
+  // DispatchQueue when the task completes successfully (no exceptions). Notify
+  // is one-time, meaning that after a task is successfully executed and callbacked,
+  // the callback needs to be set again.
   void notify(DispatchQueue& q, Func<void> callback) {
     nextWork_.notify(&q, std::move(callback));
   }
 
+  // notify is used to asynchronously commit a callback function to the specified
+  // DispatchQueue when the task completes successfully (no exceptions). Notify
+  // is one-time, meaning that after a task is successfully executed and callbacked,
+  // the callback needs to be set again.
   template <typename T>
   void notify(DispatchQueue& q, DispatchWorkItem<T>& work) {
     nextWork_.notify(&q, &work);
   }
 
+  // perform the task func synchronously. it will automatically catch uncaught
+  // exception in the task
   void perform() override {
     checkAndSetCount();
     bool success = false;
@@ -393,9 +434,10 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
   void finish(bool success) noexcept {
     if (!state_.isFinished_.load(std::memory_order_acquire)) {
       state_.isFinished_.store(true, std::memory_order_release);
+      // someone may be waiting, we need to notify it
       state_.isFinished_.notify_one();
     }
-    // do notify when finish
+    // do notify when finish. if the task performed unsuccessfully, we cancel nextWork
     if (success) {
       nextWork_.doNotify();
     } else {
@@ -408,6 +450,9 @@ class DispatchWorkItem<void> : public detail::DispatchWorkItemBase {
     func_.reset();
   }
 
+  // the task of the WorkItem, shared pointers are used to make it easier to
+  // handle concurrency and other special cases
   std::shared_ptr<Func<void>> func_{};
+  // the callback of the WorkItem
   detail::DispatchNotify<void> nextWork_{};
 };
