@@ -358,10 +358,8 @@ class MPMCQueue<T, true> {
     // There was an expansion after this ticket was issued.
     if (!maybeUpdateFromClosed(state, ticket, slots, cap, offset) &&
         // a slot is ready or a pop is in progress. No need to expand.
-        static_cast<ssize_t>(
-            ticket -
-            std::max(popTicket_.load(std::memory_order_acquire), offset)) >=
-            cap) {
+        ticket >= cap +
+                std::max(popTicket_.load(std::memory_order_acquire), offset)) {
       // This or another thread started an expansion.
       tryExpand(state, cap);
     }
@@ -381,9 +379,9 @@ class MPMCQueue<T, true> {
       seqlockReadSection(state, slots, cap);
       auto curCap = cap;
       maybeUpdateFromClosed(state, ticket, slots, cap, offset);
-      auto curSize = static_cast<ssize_t>(
-          ticket -
-          std::max(popTicket_.load(std::memory_order_acquire), offset));
+      auto curTail =
+          std::max(popTicket_.load(std::memory_order_acquire), offset);
+      auto curSize = ticket > curTail ? ticket - curTail : 0;
       if (curSize >= cap) {
         // if cap != curCap, it means that the queue has been expanded
         if (cap == curCap && tryExpand(state, cap)) {
@@ -581,7 +579,7 @@ class MPMCQueue<T, true> {
     return (ticket - offset) / actualCapacity(cap) * 2 + 1;
   }
 
-  // In my implementation, ticket is bound to slot. Even after expanding, if
+  // In this implementation, ticket is bound to slot. Even after expanding, if
   // the ticket was obtained before expand, the newly allocated space cannot be
   // used, but can only be written on the old slot. Therefore, kExtraCapacity
   // is increased to reduce the possibility of blockage (which cannot be
