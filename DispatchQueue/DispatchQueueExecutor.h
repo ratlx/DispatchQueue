@@ -11,7 +11,6 @@
 #include <queue>
 #include <semaphore>
 #include <set>
-#include <shared_mutex>
 #include <thread>
 
 #include "DispatchKeepAlive.h"
