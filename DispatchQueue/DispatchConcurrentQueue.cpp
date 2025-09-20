@@ -42,11 +42,12 @@ void DispatchConcurrentQueue::async(Func<void> func, DispatchGroup& group) {
 void DispatchConcurrentQueue::activate() {
   size_t n = 0;
   bool e = true;
-  if (inactive_.compare_exchange_strong(e, false, std::memory_order_acq_rel)) {
+  if (inactive_.compare_exchange_strong(
+          e, false, std::memory_order_seq_cst, std::memory_order_relaxed)) {
     // wake up all the sync task.
     inactive_.notify_all();
 
-    if (!suspend_.load(std::memory_order_acquire)) {
+    if (!suspend_.load(std::memory_order_seq_cst)) {
       n = taskToNotify_.exchange(0, std::memory_order_acq_rel);
     }
   }
@@ -64,11 +65,11 @@ void DispatchConcurrentQueue::suspend() {
 void DispatchConcurrentQueue::resume() {
   size_t n = 0;
   if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-    suspend_.store(false, std::memory_order_release);
+    suspend_.store(false, std::memory_order_seq_cst);
     // wake up all the sync task
     suspend_.notify_all();
 
-    if (!inactive_.load(std::memory_order_acquire)) {
+    if (!inactive_.load(std::memory_order_seq_cst)) {
       n = taskToNotify_.exchange(0, std::memory_order_acq_rel);
     }
   }

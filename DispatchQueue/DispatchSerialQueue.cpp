@@ -41,8 +41,8 @@ void DispatchSerialQueue::async(Func<void> func, DispatchGroup& group) {
 
 void DispatchSerialQueue::activate() {
   auto e = true;
-  if (inactive_.compare_exchange_strong(e, false, std::memory_order_acq_rel) &&
-      suspendCount_.load(std::memory_order_acquire) <= 0) {
+  if (inactive_.compare_exchange_strong(e, false, std::memory_order_seq_cst) &&
+      suspendCount_.load(std::memory_order_seq_cst) <= 0) {
     e = false;
     if (threadAttach_.compare_exchange_strong(
             e, true, std::memory_order_acq_rel)) {
@@ -56,11 +56,11 @@ void DispatchSerialQueue::suspend() {
 }
 
 void DispatchSerialQueue::resume() {
-  if (suspendCount_.fetch_sub(1, std::memory_order_acq_rel) == 1 &&
-      !inactive_.load(std::memory_order_acquire)) {
+  if (suspendCount_.fetch_sub(1, std::memory_order_seq_cst) == 1 &&
+      !inactive_.load(std::memory_order_seq_cst)) {
     auto e = false;
     if (threadAttach_.compare_exchange_strong(
-            e, true, std::memory_order_acq_rel)) {
+            e, true, std::memory_order_seq_cst, std::memory_order_relaxed)) {
       notifyNextWork();
     }
   }
@@ -86,7 +86,14 @@ std::optional<detail::DispatchTask> DispatchSerialQueue::tryTake() {
 
 bool DispatchSerialQueue::suspendCheck() {
   if (suspendCount_.load(std::memory_order_acquire) > 0) {
-    threadAttach_.store(false, std::memory_order_release);
+    threadAttach_.store(false, std::memory_order_seq_cst);
+
+    // double check
+    if (suspendCount_.load(std::memory_order_seq_cst) <= 0) {
+      bool e = false;
+      return !threadAttach_.compare_exchange_strong(
+          e, true, std::memory_order_acq_rel, std::memory_order_relaxed);
+    }
     return true;
   }
   return false;
