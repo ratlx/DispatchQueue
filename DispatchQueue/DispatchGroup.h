@@ -25,11 +25,14 @@ class DispatchGroup : public detail::DispatchKeepAlive {
   ~DispatchGroup() { joinKeepAliveOnce(); }
 
   void wait() noexcept {
-    auto curr = taskCount_.load(std::memory_order_acquire);
-    auto ticket = waitCount_.fetch_add(1, std::memory_order_acq_rel);
+    auto curr = taskCount_.load(std::memory_order_seq_cst);
+    auto ticket = waitCount_.fetch_add(1, std::memory_order_seq_cst);
     while (
         curr != 0 && ticket >= notifyCount_.load(std::memory_order_acquire)) {
       taskCount_.wait(curr, std::memory_order_acquire);
+      // according to https://eel.is/c++draft/atomics.wait#4
+      // if this wait is notified by a thread, they build up synchronize-with relationship,
+      // we can use acquire memory oreder below
       curr = taskCount_.load(std::memory_order_acquire);
     }
   }
@@ -52,8 +55,8 @@ class DispatchGroup : public detail::DispatchKeepAlive {
   // A call to this function must be balanced with a call to enter(), otherwise
   // cause UB
   void leave() noexcept {
-    auto mayNotify = waitCount_.load(std::memory_order_acquire);
-    if (taskCount_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    auto mayNotify = waitCount_.load(std::memory_order_seq_cst);
+    if (taskCount_.fetch_sub(1, std::memory_order_seq_cst) == 1) {
       notifyCount_.store(mayNotify, std::memory_order_release);
       taskCount_.notify_all();
 
